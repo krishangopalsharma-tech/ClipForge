@@ -174,17 +174,26 @@
 
 <!-- 3 ------------------------------------------------------------------ -->
 <section class="step" id="s3" aria-disabled="true">
-  <h2><span class="num">3</span> Send to Claude or Gemini</h2>
-  <p class="hint">Download the transcript, copy the prompt, paste both into a new chat.</p>
+  <h2><span class="num">3</span> Send to Claude, ChatGPT or Gemini</h2>
+  <p class="hint">Download the transcript, copy the prompt, paste both into a new chat. Long transcripts: attach the .txt file instead of pasting it.</p>
   <div class="body">
     <div class="row">
       <div>
-        <label>Clips wanted</label>
-        <input type="number" id="numClips" value="5" min="1" max="30">
+        <label>Clips wanted (blank = sized to the video)</label>
+        <input type="number" id="numClips" value="" placeholder="auto" min="1" max="30">
       </div>
       <div>
-        <label>Target length (seconds)</label>
-        <input type="number" id="clipLength" value="45" min="10" max="180">
+        <label>Target length, seconds (blank = audience default)</label>
+        <input type="number" id="clipLength" value="" placeholder="auto" min="10" max="180">
+      </div>
+      <div>
+        <label>Audience</label>
+        <select id="audience">
+          <option value="auto" selected>Auto (from spoken language)</option>
+          <option value="in">India &mdash; Hindi / Hinglish</option>
+          <option value="us">USA &mdash; English</option>
+          <option value="none">None (generic prompt)</option>
+        </select>
       </div>
       <div>
         <label>Prompt Template</label>
@@ -198,6 +207,7 @@
       <button id="dlTranscript">Download transcript</button>
       <button class="ghost" id="copyPrompt">Copy prompt</button>
       <button class="ghost" id="openClaude">Open Claude</button>
+      <button class="ghost" id="openChatgpt">Open ChatGPT</button>
       <button class="ghost" id="openGemini">Open Gemini</button>
     </div>
     <div class="status" id="s3Status"></div>
@@ -214,6 +224,17 @@
   <p class="hint">Paste whatever it sent back — prose and code fences are fine.</p>
   <div class="body">
     <textarea id="json" placeholder='{ "clips": [ { "start_seg": 142, "end_seg": 158, "title": "..." } ] }'></textarea>
+    <div class="row" style="margin-top:10px">
+      <div>
+        <label>Which AI answered?</label>
+        <select id="pickedBy">
+          <option value="claude">Claude</option>
+          <option value="chatgpt">ChatGPT</option>
+          <option value="gemini">Gemini</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+    </div>
     <div class="stack"><button id="check">Check clips</button></div>
     <div class="status" id="ckStatus"></div>
     <div id="preview"></div>
@@ -305,6 +326,27 @@ const state = {
   windows: null,
   jobId: null,
 };
+
+/* The fields of a checked clip that travel on to the renderer / main app. */
+function windowPayload(w) {
+  return {
+    start: w.start,
+    end: w.end,
+    snapped: true,   // already on word edges; the render must not snap again
+    title: w.title,
+    hook: w.hook,
+    description: w.description,
+    tags: w.tags,
+    score: w.score,
+    picked_by: w.picked_by,
+    reason: w.reason,
+    climax_seg: w.climax_seg,
+    climax_time: w.climax_time,
+    characters: w.characters,
+    speaker_segments: w.speaker_segments,
+    punchline_words: w.punchline_words,
+  };
+}
 
 /* ---------- helpers ---------------------------------------------------- */
 function setStep(id, enabled, done) {
@@ -498,18 +540,27 @@ $("dlTranscript").onclick = () => {
 $("copyPrompt").onclick = async () => {
   try {
     const mode = $("promptMode") ? $("promptMode").value : "general";
-    const data = await jsonOrThrow(await fetch(
-      "/api/clip-prompt?num_clips=" + $("numClips").value +
-      "&clip_length=" + $("clipLength").value +
-      "&mode=" + encodeURIComponent(mode)));
+    const q = new URLSearchParams({ mode, audience: $("audience").value });
+    if ($("numClips").value) q.set("num_clips", $("numClips").value);
+    if ($("clipLength").value) q.set("clip_length", $("clipLength").value);
+    if (state.sourceId) q.set("source_id", state.sourceId);
+    if (state.language) q.set("language", state.language);
+    const data = await jsonOrThrow(await fetch("/api/clip-prompt?" + q.toString()));
     await navigator.clipboard.writeText(data.prompt);
-    say("s3Status", "Prompt copied (" + mode + "). Paste it with the transcript file.", "ok");
+    const asked = data.clip_count_band
+      ? data.clip_count_band[0] + "-" + data.clip_count_band[1] + " clips"
+      : data.clip_count + " clips";
+    say("s3Status",
+        "Prompt copied: " + data.audience_label + ", " + asked + ", " +
+        data.length_band[0] + "-" + data.length_band[1] + "s each. " +
+        "Paste it with the transcript file.", "ok");
   } catch (err) {
     say("s3Status", err.message, "err");
   }
 };
 
 $("openClaude").onclick = () => window.open("https://claude.ai/new", "_blank", "noopener");
+$("openChatgpt").onclick = () => window.open("https://chatgpt.com/", "_blank", "noopener");
 $("openGemini").onclick = () => window.open("https://gemini.google.com/app", "_blank", "noopener");
 
 /* ---------- step 4: validate ------------------------------------------- */
@@ -524,16 +575,27 @@ $("check").onclick = async () => {
         source_id: state.sourceId,
         language: state.language || null,
         raw: $("json").value,
+        audience: $("audience").value,
+        clip_length: $("clipLength").value ? parseFloat($("clipLength").value) : null,
+        picked_by: $("pickedBy").value,
       }),
     }));
 
     state.windows = data.windows;
-    const overlapNote = data.overlaps.length
-      ? " · " + data.overlaps.length + " overlapping pair(s) — allowed, just so you know"
-      : "";
+    const notes = [];
+    if (data.overlaps.length) {
+      notes.push(data.overlaps.length + " overlapping pair(s) — allowed, just so you know");
+    }
+    if (data.skipped.length) {
+      notes.push(data.skipped.length + " clip(s) skipped: " + data.skipped.join(" "));
+    }
+    if (data.warning_count) {
+      notes.push(data.warning_count + " length warning(s)");
+    }
     say("ckStatus",
-        data.count + " clip(s), " + mmss(data.total_seconds) + " total" + overlapNote,
-        data.overlaps.length ? "warn" : "ok");
+        data.count + " clip(s), " + mmss(data.total_seconds) + " total" +
+        (notes.length ? " · " + notes.join(" · ") : ""),
+        notes.length ? "warn" : "ok");
 
     const rows = data.windows.map((w, i) => {
       const charBadges = (w.characters || []).map((c, ci) => {
@@ -554,6 +616,10 @@ $("check").onclick = async () => {
         <td>
           <div style="font-weight:600; margin-bottom:3px;">${escapeHtml(w.title)}</div>
           ${charBadges || climaxBadge ? `<div style="margin-bottom:4px;">${charBadges} ${climaxBadge}</div>` : ""}
+          ${w.hook ? `<div class="mono">Hook: ${escapeHtml(w.hook)}${w.score != null ? " &nbsp;·&nbsp; score " + w.score : ""}</div>` : ""}
+          ${(w.warnings || []).map((m) => `<div class="mono" style="color:#ffb74d">⚠ ${escapeHtml(m)}</div>`).join("")}
+          ${w.description ? `<div class="quote">${escapeHtml(w.description)}</div>` : ""}
+          ${w.tags ? `<div class="mono">${escapeHtml(w.tags)}</div>` : ""}
           ${w.reason ? `<div class="quote">${escapeHtml(w.reason)}</div>` : ""}
           ${w.text ? `<div class="quote">${escapeHtml(w.text)}</div>` : ""}
         </td>
@@ -592,17 +658,7 @@ function armClips(adopt) {
     saved_at: new Date().toISOString(),
     // `adopt` tells the main app to load this video by itself on arrival.
     adopt: !!adopt,
-    windows: state.windows.map((w) => ({
-      start: w.start,
-      end: w.end,
-      title: w.title,
-      reason: w.reason,
-      climax_seg: w.climax_seg,
-      climax_time: w.climax_time,
-      characters: w.characters,
-      speaker_segments: w.speaker_segments,
-      punchline_words: w.punchline_words,
-    })),
+    windows: state.windows.map(windowPayload),
   }));
   paintArmed();
 }
@@ -680,17 +736,7 @@ $("render").onclick = async () => {
         music_volume: parseFloat($("musicVol").value) || 35,
         flash_outro: $("flashOutro") ? $("flashOutro").checked : true,
         // Times and metadata resolved from the transcript in step 4
-        manual_windows: state.windows.map((w) => ({
-          start: w.start,
-          end: w.end,
-          title: w.title,
-          reason: w.reason,
-          climax_seg: w.climax_seg,
-          climax_time: w.climax_time,
-          characters: w.characters,
-          speaker_segments: w.speaker_segments,
-          punchline_words: w.punchline_words,
-        })),
+        manual_windows: state.windows.map(windowPayload),
       }),
     }));
 

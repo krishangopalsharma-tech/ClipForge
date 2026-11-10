@@ -488,6 +488,12 @@ def _run_pipeline(job: Job) -> None:
                 "language": caption_language,
                 "filename": download_filename(title, caption_language, index),
             }
+            # Post-ready copy and provenance from a chat-picked clip. Absent on
+            # clips the local selector found, so older history entries and the
+            # UI both keep working without them.
+            for key in ("hook", "description", "tags", "score", "picked_by"):
+                if win.get(key) not in (None, ""):
+                    clip[key] = win[key]
             results.append(clip)
             job.add_clip(clip)  # stream the finished clip to the UI immediately
 

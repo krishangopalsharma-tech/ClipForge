@@ -273,6 +273,27 @@ class ManualWindow(BaseModel):
     climax_time: Optional[float] = Field(
         default=None, description="Resolved timestamp of the climax."
     )
+    hook: Optional[str] = Field(
+        default=None, description="On-screen hook text for the first seconds."
+    )
+    description: Optional[str] = Field(
+        default=None, description="Post description: a teaser sentence plus hashtags."
+    )
+    tags: Optional[str] = Field(
+        default=None, description="Comma-separated tags, no '#'."
+    )
+    score: Optional[int] = Field(
+        default=None, ge=0, le=100, description="The chat model's 0-100 rating."
+    )
+    picked_by: Optional[str] = Field(
+        default=None,
+        description="Which chat chose this moment: claude, chatgpt, gemini, other.",
+    )
+    snapped: Optional[bool] = Field(
+        default=None,
+        description="True when start/end were already put on word edges (by the "
+        "preview step), so the render does not snap them a second time.",
+    )
 
 
 class GenerateRequest(BaseModel):

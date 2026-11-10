@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 
 from . import (
     captions, fonts, history, jobs, manual, mood, music, prefetch,
-    pretranscribe, storage, transcriber, uploads,
+    pretranscribe, profiles, storage, transcriber, uploads,
 )
 from .models import Device, GenerateRequest, InvalidVideoURLError, TranscriptionError
 from .paths import (
@@ -292,14 +292,48 @@ def get_transcript(
 
 @app.get("/api/clip-prompt")
 def clip_prompt(
-    num_clips: int = 5, clip_length: float = 45.0, mode: str = "general"
+    num_clips: Optional[int] = None,
+    clip_length: Optional[float] = None,
+    mode: str = "general",
+    audience: Optional[str] = None,
+    source_id: Optional[str] = None,
+    language: Optional[str] = None,
 ) -> dict:
     """Return the paste-ready instruction block to send with the transcript.
 
     Served from the backend so the prompt and the JSON validator that has to
     accept the reply can never drift apart.
+
+    With a ``source_id`` whose transcript exists, the audience profile follows
+    the spoken language (``audience`` = ``auto``) and an unset ``num_clips`` is
+    replaced by a count band sized to the video's length. ``clip_length`` unset
+    uses the audience's own length band. Without a transcript, the old fixed
+    defaults apply (5 clips) and the prompt is generic unless ``audience`` says
+    otherwise.
     """
-    return {"prompt": manual.build_prompt(num_clips, clip_length, mode=mode)}
+    transcript = pretranscribe.load(source_id, language) if source_id else None
+    spoken = (transcript or {}).get("language") if transcript else None
+    key = profiles.pick(audience, spoken)
+
+    count_band = None
+    if not num_clips:
+        if transcript:
+            _, hi = profiles.length_band(key, clip_length)
+            count_band = profiles.clip_count_band(transcript.get("duration") or 0.0, hi)
+        else:
+            num_clips = 5
+
+    prompt = manual.build_prompt(
+        num_clips, clip_length, mode=mode, audience=key, count_band=count_band
+    )
+    return {
+        "prompt": prompt,
+        "audience": key,
+        "audience_label": profiles.label(key),
+        "clip_count": num_clips,
+        "clip_count_band": list(count_band) if count_band else None,
+        "length_band": list(profiles.length_band(key, clip_length)),
+    }
 
 
 class ManualWindowsRequest(BaseModel):
@@ -309,6 +343,17 @@ class ManualWindowsRequest(BaseModel):
     raw: str = Field(description="Whatever the model replied with (JSON, possibly "
                                  "wrapped in prose or a markdown fence).")
     language: Optional[str] = None
+    audience: Optional[str] = Field(
+        default=None,
+        description="Audience profile used for the prompt (in / us / none / auto); "
+        "sets the length band clips are checked against.",
+    )
+    clip_length: Optional[float] = Field(
+        default=None, description="Target length the prompt asked for, if any."
+    )
+    picked_by: Optional[str] = Field(
+        default=None, description="Which chat answered: claude, chatgpt, gemini, other."
+    )
 
 
 @app.post("/api/manual-windows")
@@ -326,13 +371,22 @@ def manual_windows(req: ManualWindowsRequest) -> dict:
             status_code=404,
             detail="No transcript for this video yet. Transcribe it first.",
         )
+    key = profiles.pick(req.audience, transcript.get("language"))
+    band = profiles.length_band(key, req.clip_length)
     try:
         entries = manual.parse_windows_json(req.raw)
-        windows = manual.resolve_windows(transcript, entries)
+        windows, skipped = manual.resolve_with_report(
+            transcript, entries, length_band=band, picked_by=req.picked_by
+        )
     except manual.ManualWindowError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    return {"status": "ok", "windows": windows, **manual.summarise(windows)}
+    return {
+        "status": "ok",
+        "windows": windows,
+        "length_band": list(band),
+        **manual.summarise(windows, skipped),
+    }
 
 
 @app.get("/clips/{clip_id}/{filename}")

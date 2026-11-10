@@ -53,6 +53,16 @@ Model **segment ids** deta hai, timestamps nahi (`{"start_seg": 142, "end_seg": 
 Ids ClipForge apne transcript se resolve karta hai, is liye time bilkul theek rehta
 hai — model number galat likh de to bhi clip apne hook par hi shuru hoti hai.
 
+**Audience, count aur copy (Phase 1):** prompt ab *audience* ke hisaab se banta
+hai — Auto (spoken language se), India (Hinglish, Roman script) ya USA (English).
+"Clips wanted" aur "Target length" khaali chhodein to count video ki length se
+aur length audience se tay hoti hai. Model ab `hook`, `description`, `tags`,
+`score` bhi deta hai. Check ke waqt har clip ke start/end *word edges* par snap
+hote hain (thodi si khamoshi ke saath), length band se bahar ke clips par warning
+aati hai, aur jo clips skip hue unki wajah dikhti hai. "Which AI answered?" se
+`picked_by` (claude / chatgpt / gemini / other) clip ke saath save hota hai.
+Tests: `python\python.exe -m unittest discover -s tests`.
+
 API: `GET /api/transcript/{source_id}` · `GET /api/clip-prompt` ·
 `POST /api/manual-windows` · `POST /api/generate` mein `manual_windows`.
 
