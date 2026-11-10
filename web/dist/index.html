@@ -17,6 +17,9 @@
     <a href="/studio" id="cf-studio-link" title="Pick clip moments with Claude or Gemini">
       <span>&#9889;</span> Studio
     </a>
+    <a href="/movie" id="cf-movie-link" title="Cut a film into narrated vertical shorts">
+      <span>&#127916;</span> Movie Shorts
+    </a>
     <a href="/storage" id="cf-storage-link" title="Free up disk space">
       <span>&#128190;</span> Storage
     </a>
@@ -34,8 +37,18 @@
       }
       #cf-studio-link:hover{background:#8f74ff; transform:translateY(-1px)}
 
-      #cf-storage-link{
+      #cf-movie-link{
         position:fixed; right:18px; bottom:66px; z-index:9999;
+        display:flex; align-items:center; gap:7px;
+        padding:9px 15px; border-radius:999px;
+        background:#1e212b; border:1px solid #7c5cff66; color:#e3dcff;
+        text-decoration:none; font:600 13px/1 Outfit,system-ui,sans-serif;
+        box-shadow:0 6px 18px #0007; transition:.15s;
+      }
+      #cf-movie-link:hover{border-color:#7c5cff; color:#fff}
+
+      #cf-storage-link{
+        position:fixed; right:18px; bottom:114px; z-index:9999;
         display:flex; align-items:center; gap:7px;
         padding:9px 15px; border-radius:999px;
         background:#1e212b; border:1px solid #ffffff1f; color:#cfd3de;
@@ -45,7 +58,7 @@
       #cf-storage-link:hover{border-color:#7c5cff; color:#fff}
 
       #cf-export-link{
-        position:fixed; right:18px; bottom:106px; z-index:9999;
+        position:fixed; right:18px; bottom:162px; z-index:9999;
         display:flex; align-items:center; gap:7px;
         padding:9px 15px; border-radius:999px;
         background:#1e212b; border:1px solid #3ecf8e66; color:#c9f5e0;
