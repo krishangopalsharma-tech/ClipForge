@@ -98,13 +98,34 @@
   <div class="step off" id="s3">
     <h2><span class="n">3</span> The prompt</h2>
     <div class="row">
+      <div style="flex:2"><label>Film or series name</label>
+        <input id="title" placeholder="e.g. Breaking Bad — leave empty to let the model guess"></div>
+      <div><label>Season</label><input id="season" type="number" min="1" placeholder="—"></div>
+      <div><label>Episode</label><input id="episode" type="number" min="1" placeholder="—"></div>
+    </div>
+    <p class="meta">Naming it lets the model look it up — what people quote, which
+      scenes already circulate, the tone to match. ClipForge does no searching
+      itself; the chat you paste into does, so use one with web access.</p>
+    <div class="row">
       <div><label>Mode</label>
         <select id="mode">
           <option value="voiceover_hybrid">Voiceover + real dialogue</option>
           <option value="scene_edit">Scene edit (no narrator)</option>
         </select></div>
-      <div><label>Shorts</label><input id="num" type="number" value="4" min="1" max="12"></div>
-      <div><label>Seconds each</label><input id="len" type="number" value="90" min="15" max="180"></div>
+      <div><label>Shorts</label>
+        <select id="num">
+          <option value="" selected>Auto — the model decides</option>
+          <option value="3">3</option><option value="4">4</option>
+          <option value="5">5</option><option value="6">6</option>
+          <option value="8">8</option><option value="10">10</option>
+        </select></div>
+      <div><label>Seconds each</label>
+        <select id="len">
+          <option value="" selected>Auto — per short</option>
+          <option value="30">~30</option><option value="45">~45</option>
+          <option value="60">~60</option><option value="90">~90</option>
+          <option value="120">~120</option>
+        </select></div>
       <div class="auto"><button id="getPrompt">Build prompt</button></div>
     </div>
     <label style="margin-top:12px">Paste this into Claude, Gemini or ChatGPT</label>
@@ -268,16 +289,19 @@ $("checkTr").onclick = async () => {
 // 3 — the prompt -----------------------------------------------------------
 $("getPrompt").onclick = async () => {
   if (!sourceId) return;
-  const q = new URLSearchParams({
-    mode: $("mode").value, num_clips: $("num").value,
-    clip_length: $("len").value, source_id: sourceId,
-  });
+  // Empty fields are LEFT OUT, not sent blank: an absent num_clips/clip_length
+  // is what tells the backend to let the model decide.
+  const q = new URLSearchParams({ mode: $("mode").value, source_id: sourceId });
+  [["num_clips", $("num").value], ["clip_length", $("len").value],
+   ["title", $("title").value.trim()], ["season", $("season").value],
+   ["episode", $("episode").value]].forEach(([k, v]) => { if (v) q.set(k, v); });
   say("m3", "Building…");
   try {
     const d = await api(`/api/movie/prompt?${q}`);
     $("prompt").value = d.full;
     if (!d.segments) say("m3", "Built, but no transcript was attached — go back to step 2.", "warn");
-    else say("m3", `Built with ${d.segments} transcript lines. Copy it into your chat.`, "ok");
+    else say("m3", `Built for ${d.subject} with ${d.segments} transcript lines. `
+      + "Paste it into a chat that can browse.", "ok");
     open("s4");
   } catch (err) { say("m3", err.message, "err"); }
 };

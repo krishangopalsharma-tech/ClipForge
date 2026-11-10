@@ -66,9 +66,13 @@ _SHARED_RULES = """RULES THAT APPLY TO EVERY SHORT:
 - Output ONE json code block and nothing else."""
 
 
-def _scene_edit_prompt(count_line: str, length_line: str) -> str:
-    return f"""You are editing viral movie shorts from a film's subtitle transcript.
+def _scene_edit_prompt(
+    count_line: str, length_line: str, research: str, subject: str,
+) -> str:
+    return f"""You are editing viral shorts out of {subject}.
 Each transcript line is: [id] start-end  dialogue text
+
+{research}
 
 {count_line}
 {length_line}
@@ -103,9 +107,13 @@ TRANSCRIPT:
 """
 
 
-def _voiceover_hybrid_prompt(count_line: str, length_line: str) -> str:
-    return f"""You are writing viral English movie-recap shorts from a film's subtitle transcript.
+def _voiceover_hybrid_prompt(
+    count_line: str, length_line: str, research: str, subject: str,
+) -> str:
+    return f"""You are writing viral English recap shorts from {subject}.
 Each transcript line is: [id] start-end  dialogue text
+
+{research}
 
 {count_line}
 {length_line}
@@ -160,22 +168,104 @@ TRANSCRIPT:
 """
 
 
+def subject_line(
+    title: Optional[str] = None,
+    season: Optional[Any] = None,
+    episode: Optional[Any] = None,
+) -> str:
+    """How the prompt refers to the film or episode being cut."""
+    name = _clean(title, 160)
+    if not name:
+        return "this film or episode"
+    parts = [name]
+    if season not in (None, "", 0):
+        parts.append(f"season {season}")
+    if episode not in (None, "", 0):
+        parts.append(f"episode {episode}")
+    return ", ".join(parts)
+
+
+def _research_block(subject: str, known: bool) -> str:
+    """Tell the model to read up on the title before it picks anything.
+
+    ClipForge does not search anything — it has no network and no API keys.
+    The model does, in whatever chat the prompt is pasted into, which is the
+    one part of this workflow that already has the whole internet behind it.
+    A transcript says what was SAID; it cannot say which twenty seconds a
+    stranger would send to a friend. That is what the lookup is for.
+    """
+    find = (
+        f"Look up {subject} online before you choose anything"
+        if known else
+        "Work out from the transcript what this film or episode is, and if you "
+        "are confident, look it up online before you choose anything"
+    )
+    return f"""FIRST, RESEARCH IT:
+{find} — reviews, episode discussions, clip compilations, comment threads,
+whatever you can reach. You are looking for:
+- the scenes people actually talk about, quote and rewatch
+- the tone of it, so narration matches the thing rather than fighting it
+- anything from it that already circulates as a clip, so you do not just
+  reproduce a short that exists
+
+Then read the transcript against what you found. Where the two disagree, the
+transcript decides WHEN something happens and your research decides WHETHER it
+is worth cutting.
+
+If you cannot browse the web, say so in one line before the JSON and choose
+from the transcript alone — do not invent what people say about it."""
+
+
+def _count_and_length(
+    num_clips: Optional[int], clip_length: Optional[float]
+) -> Tuple[str, str]:
+    """The 'how many' and 'how long' lines — fixed, or left to the model."""
+    if num_clips:
+        count_line = f"Find {int(num_clips)} shorts."
+    else:
+        count_line = (
+            "HOW MANY: you decide. Cut as many shorts as this really supports "
+            "and no more — a feature usually yields four to eight, a single "
+            "episode often fewer. Never pad the list to reach a number: one "
+            "weak short costs more than a missing one."
+        )
+    if clip_length:
+        target = int(round(float(clip_length)))
+        length_line = (
+            f"Target length: about {target} seconds each "
+            f"(never under {int(MIN_SHORT_LEN)}, never over {int(MAX_SHORT_LEN)})."
+        )
+    else:
+        length_line = (
+            "HOW LONG: you decide, per short. Let the moment set its own "
+            f"length — anywhere from {int(MIN_SHORT_LEN)} to "
+            f"{int(MAX_SHORT_LEN)} seconds. A tight exchange that lands in "
+            "twenty seconds should not be padded to ninety."
+        )
+    return count_line, length_line
+
+
 def build_movie_prompt(
     mode: str = VOICEOVER_HYBRID,
-    num_clips: int = 4,
-    clip_length: float = 90.0,
+    num_clips: Optional[int] = None,
+    clip_length: Optional[float] = None,
+    title: Optional[str] = None,
+    season: Optional[Any] = None,
+    episode: Optional[Any] = None,
 ) -> str:
-    """The paste-ready instruction block for one of the two movie modes."""
+    """The paste-ready instruction block for one of the two movie modes.
+
+    ``num_clips`` and ``clip_length`` left unset hand those decisions to the
+    model, which is usually the better answer: how many good shorts a film
+    holds is a property of the film, not a number chosen in advance.
+    """
     if mode not in MODES:
         raise MovieJsonError(f"Unknown movie mode {mode!r}.")
-    count_line = f"Find {int(num_clips)} shorts in this film."
-    target = int(round(float(clip_length)))
-    length_line = (
-        f"Target length: about {target} seconds each "
-        f"(never under {int(MIN_SHORT_LEN)}, never over {int(MAX_SHORT_LEN)})."
-    )
+    subject = subject_line(title, season, episode)
+    research = _research_block(subject, bool(_clean(title, 160)))
+    count_line, length_line = _count_and_length(num_clips, clip_length)
     builder = _scene_edit_prompt if mode == SCENE_EDIT else _voiceover_hybrid_prompt
-    return builder(count_line, length_line)
+    return builder(count_line, length_line, research, subject)
 
 
 # --------------------------------------------------------------------------- #

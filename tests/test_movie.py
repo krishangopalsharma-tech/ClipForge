@@ -153,6 +153,38 @@ class PromptTests(unittest.TestCase):
         with self.assertRaises(movie.MovieJsonError):
             movie.build_movie_prompt("interpretive_dance")
 
+    def test_a_named_title_is_what_the_model_is_told_to_look_up(self):
+        text = movie.build_movie_prompt(title="Breaking Bad", season=3, episode=7)
+        self.assertIn("Breaking Bad, season 3, episode 7", text)
+        self.assertIn("Look up", text)
+
+    def test_without_a_title_the_model_is_asked_to_identify_it(self):
+        text = movie.build_movie_prompt()
+        self.assertIn("this film or episode", text)
+        self.assertIn("Work out from the transcript", text)
+
+    def test_the_prompt_never_claims_clipforge_searched_anything(self):
+        text = movie.build_movie_prompt(title="Dune")
+        self.assertIn("If you cannot browse the web", text)
+
+    def test_count_and_length_are_left_to_the_model_by_default(self):
+        text = movie.build_movie_prompt()
+        self.assertIn("HOW MANY: you decide", text)
+        self.assertIn("HOW LONG: you decide", text)
+
+    def test_a_fixed_count_and_length_override_auto(self):
+        text = movie.build_movie_prompt(num_clips=6, clip_length=45)
+        self.assertIn("Find 6 shorts", text)
+        self.assertIn("about 45 seconds", text)
+        self.assertNotIn("HOW MANY: you decide", text)
+
+    def test_subject_line_handles_partial_details(self):
+        self.assertEqual(movie.subject_line("Dune"), "Dune")
+        self.assertEqual(movie.subject_line("Dune", 2), "Dune, season 2")
+        self.assertEqual(movie.subject_line("Dune", None, 5), "Dune, episode 5")
+        self.assertEqual(movie.subject_line(None, 2, 5), "this film or episode")
+        self.assertEqual(movie.subject_line("  "), "this film or episode")
+
 
 class LetterboxTests(unittest.TestCase):
     def test_fit_mode_exists(self):
@@ -281,6 +313,19 @@ class RouteTests(unittest.TestCase):
             res = self.client.get(f"/api/movie/prompt?mode={mode}")
             self.assertEqual(res.status_code, 200, mode)
             self.assertIn("TRANSCRIPT:", res.json()["prompt"])
+
+    def test_prompt_endpoint_passes_the_title_through(self):
+        res = self.client.get(
+            "/api/movie/prompt?title=The%20Wire&season=1&episode=4")
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["subject"], "The Wire, season 1, episode 4")
+        self.assertIn("The Wire, season 1, episode 4", body["prompt"])
+
+    def test_prompt_endpoint_defaults_to_auto_count_and_length(self):
+        body = self.client.get("/api/movie/prompt").json()
+        self.assertIn("HOW MANY: you decide", body["prompt"])
+        self.assertIn("HOW LONG: you decide", body["prompt"])
 
     def test_prompt_endpoint_rejects_an_unknown_mode(self):
         self.assertEqual(self.client.get("/api/movie/prompt?mode=nope").status_code, 400)

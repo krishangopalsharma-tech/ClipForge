@@ -530,8 +530,11 @@ class MovieRenderRequest(BaseModel):
 @app.get("/api/movie/prompt")
 def movie_prompt(
     mode: str = movie.VOICEOVER_HYBRID,
-    num_clips: int = 4,
-    clip_length: float = 90.0,
+    num_clips: Optional[int] = None,
+    clip_length: Optional[float] = None,
+    title: Optional[str] = None,
+    season: Optional[str] = None,
+    episode: Optional[str] = None,
     source_id: Optional[str] = None,
     language: Optional[str] = None,
 ) -> dict:
@@ -540,9 +543,16 @@ def movie_prompt(
     Served from the backend for the same reason as ``/api/clip-prompt``: the
     prompt and the validator that has to accept the reply live together, so
     they cannot drift apart.
+
+    ``num_clips`` and ``clip_length`` left out hand those choices to the model.
+    ``title``/``season``/``episode`` name the work so the model can look it up
+    — ClipForge never searches anything itself, the chat the prompt is pasted
+    into does.
     """
     try:
-        prompt = movie.build_movie_prompt(mode, num_clips, clip_length)
+        prompt = movie.build_movie_prompt(
+            mode, num_clips, clip_length, title, season, episode,
+        )
     except movie.MovieJsonError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -558,6 +568,7 @@ def movie_prompt(
         "status": "ok",
         "mode": mode,
         "prompt": prompt,
+        "subject": movie.subject_line(title, season, episode),
         "transcript": transcript_text,
         "segments": segments,
         "full": prompt + transcript_text if transcript_text else prompt,
