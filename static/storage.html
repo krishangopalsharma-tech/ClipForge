@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClipForge Storage — free up disk space</title>
+<style>
+  :root{
+    --bg:#0e0f13; --panel:#171921; --panel-2:#1e212b; --line:#2a2e3c;
+    --text:#e7e9ee; --muted:#9aa1b1; --accent:#6c8cff;
+    --ok:#3ecf8e; --warn:#ffb020; --err:#ff5f6b;
+    --radius:12px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--bg); color:var(--text);
+       font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:1000px; margin:0 auto; padding:32px 20px 96px}
+  h1{margin:0 0 6px; font-size:26px; letter-spacing:-.02em}
+  .sub{color:var(--muted); font-size:14px; margin-bottom:26px}
+  .sub a{color:var(--accent); text-decoration:none}
+
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin-bottom:22px}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:15px 17px}
+  .card .k{color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.06em}
+  .card .v{font-size:24px; font-weight:700; margin-top:5px; letter-spacing:-.02em}
+  .card.total{border-color:#6c8cff55; background:linear-gradient(180deg,#6c8cff14,var(--panel))}
+
+  section{background:var(--panel); border:1px solid var(--line);
+          border-radius:var(--radius); padding:20px; margin-bottom:16px}
+  section h2{margin:0 0 3px; font-size:15px; font-weight:600}
+  .hint{color:var(--muted); font-size:13px; margin:0 0 14px}
+  .head{display:flex; justify-content:space-between; align-items:flex-start; gap:14px; flex-wrap:wrap}
+
+  button{background:var(--accent); color:#0b0d12; border:0; border-radius:8px;
+         padding:8px 14px; font:600 13px/1 inherit; cursor:pointer; font-family:inherit}
+  button:hover:not(:disabled){filter:brightness(1.08)}
+  button:disabled{opacity:.4; cursor:not-allowed}
+  button.ghost{background:transparent; color:var(--text); border:1px solid var(--line)}
+  button.ghost:hover:not(:disabled){border-color:var(--accent); color:var(--accent)}
+  button.danger{background:transparent; color:var(--err); border:1px solid #ff5f6b44}
+  button.danger:hover:not(:disabled){background:#ff5f6b1a; border-color:var(--err)}
+
+  table{width:100%; border-collapse:collapse; font-size:13px}
+  th{text-align:left; color:var(--muted); font-weight:500; font-size:11px;
+     text-transform:uppercase; letter-spacing:.06em; padding:0 8px 8px; border-bottom:1px solid var(--line)}
+  td{padding:11px 8px; border-bottom:1px solid var(--line); vertical-align:middle}
+  tr:last-child td{border-bottom:0}
+  .mono{font-family:ui-monospace,Consolas,monospace; color:var(--muted); white-space:nowrap}
+  .size{font-variant-numeric:tabular-nums; white-space:nowrap; font-weight:600}
+  .acts{display:flex; gap:7px; justify-content:flex-end; flex-wrap:wrap}
+  td.r{text-align:right}
+  .tag{display:inline-block; padding:2px 8px; border-radius:99px; font-size:11px;
+       background:#ffffff0f; color:var(--muted); white-space:nowrap}
+  .tag.warn{background:#ffb02020; color:var(--warn)}
+
+  .status{font-size:13px; color:var(--muted); margin-top:12px; min-height:19px}
+  .status.ok{color:var(--ok)} .status.err{color:var(--err)} .status.warn{color:var(--warn)}
+  .empty{color:var(--muted); font-size:13px; padding:10px 0}
+  .note{background:#ffb02014; border:1px solid #ffb02033; border-left:3px solid var(--warn);
+        border-radius:8px; padding:11px 13px; font-size:13px; color:#e3d3b4; margin-bottom:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Storage</h1>
+<div class="sub">
+  Free up disk space after copying clips to your external drive.
+  &nbsp;·&nbsp; <a href="/">Main app</a> &nbsp;·&nbsp; <a href="/studio">Studio</a>
+  &nbsp;·&nbsp; <a href="#" id="refresh">Refresh</a>
+</div>
+
+<div class="cards">
+  <div class="card total"><div class="k">Total</div><div class="v" id="tTotal">–</div></div>
+  <div class="card"><div class="k">Source videos</div><div class="v" id="tDown">–</div></div>
+  <div class="card"><div class="k">Rendered clips</div><div class="v" id="tClips">–</div></div>
+  <div class="card"><div class="k">Transcripts</div><div class="v" id="tTrans">–</div></div>
+</div>
+
+<section>
+  <div class="head">
+    <div>
+      <h2>Where clips are saved</h2>
+      <p class="hint">
+        Point this at a synced folder (Google Drive, OneDrive, Dropbox) and finished
+        clips land there directly — nothing to copy over, and no second copy here.
+      </p>
+    </div>
+  </div>
+  <div class="row" style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap">
+    <div style="flex:1 1 380px">
+      <label style="display:block; font-size:12px; color:var(--muted); margin:0 0 5px">
+        Full folder path
+      </label>
+      <input type="text" id="clipsDir" spellcheck="false"
+             placeholder="G:\My Drive\ClipForge"
+             style="background:var(--panel-2); border:1px solid var(--line); color:var(--text);
+                    border-radius:8px; padding:9px 11px; font:inherit; width:100%">
+    </div>
+    <button id="saveDir">Save</button>
+    <button class="ghost" id="resetDir">Use default</button>
+  </div>
+  <div class="status" id="dirStatus"></div>
+</section>
+
+<div class="note">
+  <strong>Copy anything you want to keep first.</strong> Deleting here removes files
+  permanently — they do not go to the Recycle Bin.
+</div>
+
+<section>
+  <div class="head">
+    <div>
+      <h2>Source videos</h2>
+      <p class="hint">The originals you uploaded or downloaded. Almost always the biggest thing on disk.</p>
+    </div>
+    <button class="danger" id="purgeSources">Delete all videos</button>
+  </div>
+  <div id="sources"></div>
+</section>
+
+<section>
+  <div class="head">
+    <div>
+      <h2>Rendered clips</h2>
+      <p class="hint">One row per generation, whichever way it was made. Delete after copying to your drive.</p>
+    </div>
+    <button class="danger" id="purgeClips">Delete all clips</button>
+  </div>
+  <div id="gens"></div>
+</section>
+
+<section>
+  <div class="head">
+    <div>
+      <h2>Leftover transcripts</h2>
+      <p class="hint">Transcripts whose video is already gone. Safe to remove — nothing can be cut from them.</p>
+    </div>
+    <button class="danger" id="purgeOrphans">Delete leftovers</button>
+  </div>
+  <div id="orphans"></div>
+</section>
+
+<div class="status" id="status"></div>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+let report = null;
+
+function mb(bytes) {
+  if (!bytes) return "0 MB";
+  const gb = bytes / 1073741824;
+  if (gb >= 1) return gb.toFixed(2) + " GB";
+  return (bytes / 1048576).toFixed(1) + " MB";
+}
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function when(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return isNaN(d) ? iso : d.toLocaleString();
+}
+function say(msg, kind) {
+  $("status").textContent = msg || "";
+  $("status").className = "status" + (kind ? " " + kind : "");
+}
+async function call(url, opts) {
+  const res = await fetch(url, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || ("Request failed (" + res.status + ")"));
+  return data;
+}
+
+async function load() {
+  say("Reading disk…");
+  try {
+    report = await call("/api/storage");
+  } catch (err) { say(err.message, "err"); return; }
+
+  const t = report.totals;
+  $("tTotal").textContent = mb(t.clips_bytes + t.downloads_bytes + t.transcripts_bytes);
+  $("tDown").textContent = mb(t.downloads_bytes);
+  $("tClips").textContent = mb(t.clips_bytes);
+  $("tTrans").textContent = mb(t.transcripts_bytes);
+
+  renderSources();
+  renderGens();
+  renderOrphans();
+  say("");
+}
+
+function renderSources() {
+  const rows = report.sources;
+  $("purgeSources").disabled = !rows.length;
+  if (!rows.length) { $("sources").innerHTML = '<div class="empty">No source videos on disk.</div>'; return; }
+
+  $("sources").innerHTML = `<table><thead><tr>
+      <th>Video</th><th>Size</th><th>Transcript</th><th>Clips made</th><th></th>
+    </tr></thead><tbody>${rows.map((s) => `
+      <tr data-src="${s.source_id}">
+        <td class="mono">${s.source_id.slice(0, 12)}…${esc(s.ext)}</td>
+        <td class="size">${mb(s.bytes)}</td>
+        <td>${s.transcript_count
+              ? `<span class="tag">${mb(s.transcript_bytes)}</span>`
+              : `<span class="tag warn">none</span>`}</td>
+        <td>${s.generations.length
+              ? s.generations.length + " generation(s)"
+              : '<span class="tag">none</span>'}</td>
+        <td class="r"><div class="acts">
+          ${s.transcript_count
+            ? `<button class="ghost" data-act="tr" data-id="${s.source_id}">Transcript only</button>` : ""}
+          <button class="danger" data-act="src" data-id="${s.source_id}" data-size="${s.bytes}">Delete video</button>
+        </div></td>
+      </tr>`).join("")}</tbody></table>`;
+}
+
+function renderGens() {
+  const rows = report.generations;
+  $("purgeClips").disabled = !rows.length;
+  if (!rows.length) { $("gens").innerHTML = '<div class="empty">No rendered clips.</div>'; return; }
+
+  $("gens").innerHTML = `<table><thead><tr>
+      <th>When</th><th>From</th><th>Clips</th><th>Size</th><th></th>
+    </tr></thead><tbody>${rows.map((g) => `
+      <tr>
+        <td class="mono">${esc(when(g.created))}</td>
+        <td>${esc(g.source || "—")}</td>
+        <td>${g.clip_count}</td>
+        <td class="size">${mb(g.bytes)}</td>
+        <td class="r"><div class="acts">
+          <button class="danger" data-act="gen" data-id="${g.clip_id}">Delete</button>
+        </div></td>
+      </tr>`).join("")}</tbody></table>`;
+}
+
+function renderOrphans() {
+  const rows = report.orphan_transcripts;
+  $("purgeOrphans").disabled = !rows.length;
+  if (!rows.length) { $("orphans").innerHTML = '<div class="empty">None — nothing left over.</div>'; return; }
+  const total = rows.reduce((n, o) => n + o.bytes, 0);
+  $("orphans").innerHTML =
+    `<div class="empty">${rows.length} leftover transcript(s), ${mb(total)} total.</div>`;
+}
+
+/* ---------- actions (all confirmed, all permanent) ---------------------- */
+document.body.addEventListener("click", async (e) => {
+  const btn = e.target.closest("button[data-act]");
+  if (!btn) return;
+  const act = btn.dataset.act, id = btn.dataset.id;
+
+  let url, opts = { method: "DELETE" }, ask;
+  if (act === "src") {
+    ask = "Delete this source video (" + mb(Number(btn.dataset.size)) + ") and its transcript?\n\n" +
+          "Clips already rendered from it are kept. You will not be able to make new clips " +
+          "from this video unless you upload it again.";
+    url = "/api/storage/source/" + id;
+  } else if (act === "tr") {
+    ask = "Delete the cached transcript but keep the video?\n\n" +
+          "The video would need transcribing again before its next use.";
+    url = "/api/storage/transcript/" + id;
+  } else if (act === "gen") {
+    ask = "Delete every clip in this generation?\n\nMake sure you have copied them first.";
+    url = "/api/storage/generation/" + id;
+  } else return;
+
+  if (!confirm(ask)) return;
+  btn.disabled = true;
+  try {
+    const out = await call(url, opts);
+    say("Freed " + mb(out.freed_bytes) + ".", "ok");
+    await load();
+  } catch (err) {
+    btn.disabled = false;
+    say(err.message, "err");
+  }
+});
+
+async function purge(target, ask) {
+  if (!confirm(ask)) return;
+  say("Deleting…");
+  try {
+    const out = await call("/api/storage/purge/" + target, { method: "POST" });
+    say("Removed " + out.removed + " item(s), freed " + mb(out.freed_bytes) + ".", "ok");
+    await load();
+  } catch (err) { say(err.message, "err"); }
+}
+
+$("purgeSources").onclick = () => purge("sources",
+  "Delete ALL source videos and their transcripts?\n\n" +
+  "Rendered clips are kept. Any video you still want to cut from must be uploaded again.");
+$("purgeClips").onclick = () => purge("clips",
+  "Delete ALL rendered clips from every generation?\n\n" +
+  "Make sure everything is copied to your external drive first.");
+$("purgeOrphans").onclick = () => purge("orphan_transcripts",
+  "Delete all leftover transcripts whose video is already gone?");
+
+/* ---------- where clips are saved --------------------------------------- */
+async function loadSettings() {
+  try {
+    const s = await call("/api/settings");
+    $("clipsDir").value = s.configured || "";
+    $("clipsDir").placeholder = s.default_clips_dir;
+    if (s.pending_restart) {
+      sayDir("Saved. Restart ClipForge to start writing clips there — right now "
+             + "it is still using " + s.clips_dir, "warn");
+    } else {
+      sayDir("Currently saving to " + s.clips_dir
+             + (s.is_default ? " (default)" : ""));
+    }
+  } catch (err) { sayDir(err.message, "err"); }
+}
+function sayDir(msg, kind) {
+  $("dirStatus").textContent = msg || "";
+  $("dirStatus").className = "status" + (kind ? " " + kind : "");
+}
+
+async function saveDir(path) {
+  sayDir("Checking the folder…");
+  try {
+    const out = await call("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clips_dir: path }),
+    });
+    if (out.restart_required) {
+      sayDir("Saved: " + out.clips_dir
+             + " — restart ClipForge for it to take effect.", "warn");
+    } else {
+      sayDir("Saving clips to " + out.clips_dir + ".", "ok");
+    }
+    await loadSettings();
+  } catch (err) { sayDir(err.message, "err"); }
+}
+
+$("saveDir").onclick = () => saveDir($("clipsDir").value.trim());
+$("resetDir").onclick = () => {
+  if (!confirm("Go back to saving clips inside the ClipForge folder?")) return;
+  $("clipsDir").value = "";
+  saveDir("");
+};
+
+$("refresh").onclick = (e) => { e.preventDefault(); load(); loadSettings(); };
+load();
+loadSettings();
+</script>
+</body>
+</html>

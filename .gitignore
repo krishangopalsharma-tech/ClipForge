@@ -1,0 +1,13 @@
+# Embedded Python, model weights and user media are not source
+python/
+models/
+downloads/
+clips/
+transcripts/
+data/
+__pycache__/
+*.pyc
+*.log
+pip_done.txt
+install.log
+.work/

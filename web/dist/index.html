@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <title>ClipForge · Dashboard</title>
+    <script type="module" crossorigin src="/assets/index-D8nZkgnN.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BAO2fWTA.css">
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- Link to Studio mode (pick clip moments with Claude/Gemini, see /studio).
+         A sibling of #root, so the React app never renders over it. -->
+    <a href="/studio" id="cf-studio-link" title="Pick clip moments with Claude or Gemini">
+      <span>&#9889;</span> Studio
+    </a>
+    <a href="/storage" id="cf-storage-link" title="Free up disk space">
+      <span>&#128190;</span> Storage
+    </a>
+    <style>
+      #cf-studio-link{
+        position:fixed; right:18px; bottom:18px; z-index:9999;
+        display:flex; align-items:center; gap:7px;
+        padding:10px 16px; border-radius:999px;
+        background:#7c5cff; color:#fff; text-decoration:none;
+        font:600 14px/1 Outfit,system-ui,sans-serif;
+        box-shadow:0 6px 20px #7c5cff59; transition:.15s;
+      }
+      #cf-studio-link:hover{background:#8f74ff; transform:translateY(-1px)}
+
+      #cf-storage-link{
+        position:fixed; right:18px; bottom:66px; z-index:9999;
+        display:flex; align-items:center; gap:7px;
+        padding:9px 15px; border-radius:999px;
+        background:#1e212b; border:1px solid #ffffff1f; color:#cfd3de;
+        text-decoration:none; font:600 13px/1 Outfit,system-ui,sans-serif;
+        box-shadow:0 6px 18px #0007; transition:.15s;
+      }
+      #cf-storage-link:hover{border-color:#7c5cff; color:#fff}
+
+      #cf-armed{
+        position:fixed; top:14px; left:50%; transform:translateX(-50%); z-index:10000;
+        display:none; align-items:center; gap:12px;
+        padding:9px 12px 9px 16px; border-radius:999px;
+        background:#1b1430; border:1px solid #7c5cff66; color:#e9e4ff;
+        font:500 13px/1.3 Outfit,system-ui,sans-serif;
+        box-shadow:0 8px 28px #0009;
+      }
+      #cf-armed b{color:#fff}
+      #cf-armed .sub{color:#a99ccc; font-size:12px}
+      #cf-armed button{
+        background:#ffffff14; border:1px solid #ffffff26; color:#e9e4ff;
+        border-radius:999px; padding:5px 11px; font:inherit; font-size:12px; cursor:pointer;
+      }
+      #cf-armed button:hover{background:#ffffff24}
+    </style>
+
+    <!-- Studio bridge -------------------------------------------------------
+         Lets clips chosen in /studio render through THIS page, so the full
+         caption / music / effects toolset and the live preview still apply.
+
+         The React bundle POSTs /api/generate with window.fetch, so wrapping
+         fetch is enough to append `manual_windows` to the body it already
+         built. Nothing about the app's own request is changed otherwise, and
+         with no armed clips this is a no-op passthrough. -->
+    <div id="cf-armed">
+      <span><b id="cf-armed-n">0</b> Studio clips armed <span class="sub" id="cf-armed-src"></span></span>
+      <button type="button" id="cf-armed-clear">Clear</button>
+    </div>
+    <script>
+    (function () {
+      "use strict";
+      var KEY = "cf-armed-clips";
+
+      function read() {
+        try {
+          var a = JSON.parse(localStorage.getItem(KEY) || "null");
+          return a && Array.isArray(a.windows) && a.windows.length ? a : null;
+        } catch (_) { return null; }
+      }
+
+      function paint() {
+        var a = read(), el = document.getElementById("cf-armed");
+        if (!el) return;
+        if (!a) { el.style.display = "none"; return; }
+        el.style.display = "flex";
+        document.getElementById("cf-armed-n").textContent = a.windows.length;
+        document.getElementById("cf-armed-src").textContent =
+          "· video " + String(a.source_id || "").slice(0, 8) +
+          "… · style it, then Generate renders these";
+      }
+
+      document.getElementById("cf-armed-clear").onclick = function () {
+        localStorage.removeItem(KEY);
+        paint();
+      };
+      // Studio runs in another tab on the same origin; keep the banner honest.
+      window.addEventListener("storage", paint);
+      window.addEventListener("focus", paint);
+      paint();
+
+      // --- auto-adopt the Studio video ----------------------------------
+      // The app can take its source either from an upload OR from a file the
+      // server already fetched (it previews that one straight from
+      // /api/download/<id>/video). The second path is exactly what a Studio
+      // video is, so we answer the app's prefetch call ourselves with the id
+      // it already has on disk. No bytes move, and the preview still works.
+      var MARKER = "https://studio.local/";
+
+      function fakeDone(sourceId) {
+        return new Response(JSON.stringify({
+          prefetch_id: "studio",
+          status: "done",
+          download_id: sourceId,
+          progress: 1
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+
+      function setReactValue(el, value) {
+        // React tracks its own copy of the value, so assigning .value directly
+        // is ignored. Go through the native setter, then fire the event React
+        // actually listens for.
+        var proto = Object.getPrototypeOf(el);
+        var setter = Object.getOwnPropertyDescriptor(proto, "value");
+        if (setter && setter.set) setter.set.call(el, value);
+        else el.value = value;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+
+      function findLinkInput() {
+        var inputs = document.querySelectorAll("input");
+        for (var i = 0; i < inputs.length; i++) {
+          var ph = (inputs[i].placeholder || "").toLowerCase();
+          if (ph.indexOf("link") !== -1 || ph.indexOf("url") !== -1) return inputs[i];
+        }
+        return null;
+      }
+
+      function findGenerateButton() {
+        var buttons = document.querySelectorAll("button");
+        for (var i = 0; i < buttons.length; i++) {
+          if (/generate/i.test(buttons[i].textContent || "")) return buttons[i];
+        }
+        return null;
+      }
+
+      function findClipCountInput() {
+        // The clip-count spinner: a 1..100 number input sitting under a "CLIPS"
+        // label. Matching on both keeps it apart from the styling spinners.
+        var inputs = document.querySelectorAll('input[type="number"][min="1"][max="100"]');
+        for (var i = 0; i < inputs.length; i++) {
+          var near = inputs[i].closest("div");
+          near = near && near.parentElement;
+          if (near && /clips/i.test(near.innerText || "")) return inputs[i];
+        }
+        return null;
+      }
+
+      // Keep the visible clip count honest: with clips armed the app renders
+      // exactly those, so leaving the spinner on its own number is misleading.
+      function syncClipCount(count) {
+        var tries = 0;
+        var timer = setInterval(function () {
+          tries++;
+          var input = findClipCountInput();
+          if (input) {
+            clearInterval(timer);
+            if (Number(input.value) !== count) {
+              try { setReactValue(input, String(count)); } catch (_) {}
+            }
+          } else if (tries > 40) {
+            clearInterval(timer);
+          }
+        }, 250);
+      }
+
+      function adopt(armed) {
+        var tries = 0;
+        var timer = setInterval(function () {
+          tries++;
+          var input = findLinkInput();
+          var button = input ? findGenerateButton() : null;
+          if (input && button) {
+            clearInterval(timer);
+            try {
+              setReactValue(input, MARKER + armed.source_id);
+              setTimeout(function () {
+                button.click();
+                syncClipCount(armed.windows.length);
+              }, 120);
+            } catch (err) {
+              console.warn("Studio auto-load failed; load the video yourself.", err);
+            }
+          } else if (tries > 40) {          // ~8s, then give up quietly
+            clearInterval(timer);
+          }
+        }, 200);
+      }
+
+      var nativeFetch = window.fetch.bind(window);
+      window.fetch = function (input, init) {
+        var url = typeof input === "string" ? input : (input && input.url) || "";
+        var method = ((init && init.method) || (input && input.method) || "GET").toUpperCase();
+
+        // Answer the prefetch for a Studio video locally — the file is already
+        // in downloads/, so there is nothing to fetch.
+        if (method === "POST" && url.indexOf("/api/prefetch") !== -1 && init && init.body) {
+          var armedNow = read();
+          try {
+            var pf = JSON.parse(init.body);
+            if (armedNow && String(pf.video_url || "").indexOf(MARKER) === 0) {
+              return Promise.resolve(fakeDone(armedNow.source_id));
+            }
+          } catch (_) { /* not ours — fall through */ }
+        }
+
+        if (method !== "POST" || url.indexOf("/api/generate") === -1 || !init || !init.body) {
+          return nativeFetch(input, init);
+        }
+
+        var armed = read();
+        if (!armed) return nativeFetch(input, init);
+
+        var body;
+        try { body = JSON.parse(init.body); } catch (_) { return nativeFetch(input, init); }
+
+        // Only inject when this really is the video the clips were chosen from —
+        // otherwise the timings would point into a different timeline.
+        var source = body.upload_id || body.download_id || "";
+        if (source && source !== armed.source_id) {
+          var go = window.confirm(
+            "The armed Studio clips belong to a different video.\n\n" +
+            "OK — ignore them and let ClipForge pick clips automatically.\n" +
+            "Cancel — stop, so you can load the matching video first."
+          );
+          if (!go) return Promise.reject(new Error("Cancelled: armed Studio clips are for another video."));
+          return nativeFetch(input, init);
+        }
+
+        body.manual_windows = armed.windows.map(function (w) {
+          return {
+            start: w.start,
+            end: w.end,
+            title: w.title,
+            reason: w.reason,
+            climax_seg: w.climax_seg,
+            climax_time: w.climax_time,
+            characters: w.characters,
+            speaker_segments: w.speaker_segments,
+            punchline_words: w.punchline_words,
+          };
+        });
+        body.flash_outro = true;
+        var next = Object.assign({}, init, { body: JSON.stringify(body) });
+        return nativeFetch(input, next);
+      };
+
+      // Run last, once everything above is defined. Studio sets `adopt` when it
+      // sends you here, so the video loads itself; the flag is consumed once, so
+      // coming back later does not re-trigger it.
+      var armedOnLoad = read();
+      if (armedOnLoad) {
+        if (armedOnLoad.adopt) {
+          armedOnLoad.adopt = false;
+          try { localStorage.setItem(KEY, JSON.stringify(armedOnLoad)); } catch (_) {}
+          adopt(armedOnLoad);
+        } else {
+          syncClipCount(armedOnLoad.windows.length);
+        }
+      }
+    })();
+    </script>
+  </body>
+</html>
