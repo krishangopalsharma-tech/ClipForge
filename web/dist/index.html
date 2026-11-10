@@ -23,6 +23,17 @@
     <a href="/storage" id="cf-storage-link" title="Free up disk space">
       <span>&#128190;</span> Storage
     </a>
+    <!-- Reuse a video already on disk, instead of uploading it a second time. -->
+    <button type="button" id="cf-recent-btn" title="Load a video you have already uploaded">
+      <span>&#128249;</span> Your videos
+    </button>
+    <div id="cf-recent" hidden>
+      <header>
+        <b>Your videos</b>
+        <button type="button" id="cf-recent-close">Close</button>
+      </header>
+      <div id="cf-recent-list"><p class="cf-note">Loading&hellip;</p></div>
+    </div>
     <a href="/api/export.csv" id="cf-export-link" title="Download every clip of this batch as a ZIP, with a CSV to track your uploads" hidden>
       <span>&#11015;</span> <b>All clips + CSV</b>
     </a>
@@ -82,6 +93,45 @@
         border-radius:999px; padding:5px 11px; font:inherit; font-size:12px; cursor:pointer;
       }
       #cf-armed button:hover{background:#ffffff24}
+
+      #cf-recent-btn{
+        position:fixed; left:18px; bottom:18px; z-index:9999;
+        display:flex; align-items:center; gap:7px;
+        padding:9px 15px; border-radius:999px;
+        background:#1e212b; border:1px solid #ffffff1f; color:#cfd3de;
+        font:600 13px/1 Outfit,system-ui,sans-serif; cursor:pointer;
+        box-shadow:0 6px 18px #0007; transition:.15s;
+      }
+      #cf-recent-btn:hover{border-color:#7c5cff; color:#fff}
+      #cf-recent{
+        position:fixed; left:18px; bottom:62px; z-index:10000;
+        width:380px; max-height:70vh; overflow:auto;
+        padding:14px; border-radius:16px;
+        background:#14161d; border:1px solid #ffffff1f;
+        box-shadow:0 18px 50px #000b;
+        font:400 13px/1.45 Outfit,system-ui,sans-serif; color:#cfd3de;
+      }
+      #cf-recent[hidden]{display:none}
+      #cf-recent header{
+        display:flex; align-items:center; justify-content:space-between;
+        margin-bottom:10px; color:#fff;
+      }
+      #cf-recent header button{
+        background:#ffffff14; border:1px solid #ffffff26; color:#e9e4ff;
+        border-radius:999px; padding:4px 10px; font:inherit; font-size:12px; cursor:pointer;
+      }
+      #cf-recent .cf-note{color:#8b90a0; font-size:12px; margin:6px 2px}
+      #cf-recent .cf-row{
+        display:block; width:100%; text-align:left;
+        padding:9px 11px; margin-bottom:6px; border-radius:11px;
+        background:#1b1e27; border:1px solid #ffffff14; color:#e6e8ef;
+        font:inherit; cursor:pointer; transition:.12s;
+      }
+      #cf-recent .cf-row:hover{border-color:#7c5cff; background:#20243040}
+      #cf-recent .cf-row b{display:block; font-weight:600; color:#fff;
+        overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+      #cf-recent .cf-row span{color:#8b90a0; font-size:12px}
+      #cf-recent .cf-row em{color:#9ad7b4; font-style:normal}
     </style>
 
     <!-- Download all: when clips are on screen, link to a ZIP of them plus a tracking
@@ -273,11 +323,18 @@
         // Answer the prefetch for a Studio video locally — the file is already
         // in downloads/, so there is nothing to fetch.
         if (method === "POST" && url.indexOf("/api/prefetch") !== -1 && init && init.body) {
-          var armedNow = read();
           try {
             var pf = JSON.parse(init.body);
-            if (armedNow && String(pf.video_url || "").indexOf(MARKER) === 0) {
-              return Promise.resolve(fakeDone(armedNow.source_id));
+            var marked = String(pf.video_url || "");
+            if (marked.indexOf(MARKER) === 0) {
+              // The id is in the marker itself, so this works for a video
+              // picked from "Your videos" as well as one sent from Studio.
+              var picked = marked.slice(MARKER.length);
+              if (/^[0-9a-f]{32}$/.test(picked)) {
+                return Promise.resolve(fakeDone(picked));
+              }
+              var armedNow = read();
+              if (armedNow) return Promise.resolve(fakeDone(armedNow.source_id));
             }
           } catch (_) { /* not ours — fall through */ }
         }
@@ -322,6 +379,78 @@
         var next = Object.assign({}, init, { body: JSON.stringify(body) });
         return nativeFetch(input, next);
       };
+
+      // --- "Your videos" ------------------------------------------------
+      // Loading a film again means uploading gigabytes a second time, when the
+      // file is already in downloads/. Picking one here feeds the app the same
+      // marker URL Studio uses, so it adopts the video without moving bytes.
+      (function () {
+        var btn = document.getElementById("cf-recent-btn");
+        var panel = document.getElementById("cf-recent");
+        var list = document.getElementById("cf-recent-list");
+        if (!btn || !panel || !list) return;
+        var loaded = false;
+
+        function size(bytes) {
+          var gb = bytes / 1073741824;
+          return gb >= 1 ? gb.toFixed(1) + " GB" : Math.round(bytes / 1048576) + " MB";
+        }
+
+        function load() {
+          fetch("/api/videos").then(function (r) { return r.json(); }).then(function (d) {
+            var videos = (d && d.videos) || [];
+            if (!videos.length) {
+              list.innerHTML = '<p class="cf-note">Nothing uploaded yet. ' +
+                'Upload a video and it will be listed here next time.</p>';
+              return;
+            }
+            list.innerHTML = "";
+            videos.forEach(function (v) {
+              var row = document.createElement("button");
+              row.type = "button";
+              row.className = "cf-row";
+              var name = document.createElement("b");
+              name.textContent = v.label || ("Video " + v.source_id.slice(0, 8));
+              var meta = document.createElement("span");
+              meta.textContent = new Date(v.modified * 1000).toLocaleString() +
+                " · " + size(v.bytes) + " · ";
+              var tr = document.createElement(v.has_transcript ? "em" : "span");
+              tr.textContent = v.has_transcript ? "transcribed" : "not transcribed yet";
+              meta.appendChild(tr);
+              row.appendChild(name);
+              row.appendChild(meta);
+              row.onclick = function () { pick(v); };
+              list.appendChild(row);
+            });
+          }).catch(function () {
+            list.innerHTML = '<p class="cf-note">Could not read your videos.</p>';
+          });
+        }
+
+        function pick(video) {
+          var input = findLinkInput();
+          var button = findGenerateButton();
+          if (!input || !button) {
+            alert("The page is still loading — try again in a moment.");
+            return;
+          }
+          panel.hidden = true;
+          setReactValue(input, MARKER + video.source_id);
+          setTimeout(function () { button.click(); }, 120);
+        }
+
+        btn.onclick = function () {
+          panel.hidden = !panel.hidden;
+          if (!panel.hidden) { load(); loaded = true; }
+        };
+        document.getElementById("cf-recent-close").onclick = function () {
+          panel.hidden = true;
+        };
+        // Reopening after an upload should show the new file.
+        window.addEventListener("focus", function () {
+          if (loaded && !panel.hidden) load();
+        });
+      })();
 
       // Run last, once everything above is defined. Studio sets `adopt` when it
       // sends you here, so the video loads itself; the flag is consumed once, so

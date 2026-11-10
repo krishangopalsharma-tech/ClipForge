@@ -592,13 +592,14 @@ def movie_voices() -> dict:
 _HEX32 = re.compile(r"^[0-9a-f]{32}$")
 
 
+@app.get("/api/videos")
 @app.get("/api/movie/videos")
 def movie_videos() -> dict:
     """Videos already in the library, newest first.
 
-    Step 1 asks for a source id, which is a 32-character hex string nobody can
-    be expected to remember. This is where the picker gets its list, so the id
-    stays an implementation detail rather than something to copy by hand.
+    A source id is a 32-character hash nobody can be expected to remember, so
+    both pickers that reuse a video — the dashboard's and Movie Shorts' step 1
+    — read their list from here, and the id stays an implementation detail.
     """
     labels: dict = {}
     try:

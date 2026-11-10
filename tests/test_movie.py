@@ -410,6 +410,13 @@ class RouteTests(unittest.TestCase):
         self.assertFalse(body["videos"][0]["has_transcript"])
         self.assertTrue(body["videos"][1]["has_transcript"])
 
+    def test_videos_is_served_under_both_paths(self):
+        """The dashboard calls /api/videos; Movie Shorts' older path still works."""
+        for path in ("/api/videos", "/api/movie/videos"):
+            res = self.client.get(path)
+            self.assertEqual(res.status_code, 200, path)
+            self.assertIn("videos", res.json(), path)
+
     def test_videos_endpoint_falls_back_to_the_history_label(self):
         import tempfile
         from app import main
