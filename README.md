@@ -121,6 +121,21 @@ nahi), sirf salah deta hai, kabhi block nahi karta, aur fail ho to "koi
 duplicate nahi" maana jaata hai. API: `POST /api/source/check` aur
 `/api/generate` ke jawab mein `duplicates`.
 
+**Saare clips ek saath + CSV:** jahan clips dikhte hain (main dashboard ka
+neeche-right ka hara "All clips + CSV" button, Studio ka step 5 aur step 6) wahan
+ek ZIP milta hai jisme us generation ke saare clips aur `clips.csv` hota hai.
+CSV ek tracking sheet hai: har clip ka title, hook, description, tags, score,
+start/end, framing, caption style, kis AI ne chuna, source, aur khaali
+`platform`, `posted_at`, `post_url`, `status` (default `not_posted`) columns
+jinhe aap YouTube/Instagram par upload karte waqt bharte jaayein. `filename`
+column ZIP ke andar ki file ka naam hai, to row aur file hamesha match hoti hain.
+CSV UTF-8 (BOM ke saath) hai, Excel mein Hindi theek khulti hai; `=`, `+`, `-`, `@`
+se shuru hone wale cells ke aage `'` lagta hai taaki AI ka likha text formula
+ban kar chal na jaaye. API: `GET /api/export/{clip_id}` (ZIP),
+`/api/export/{clip_id}/clips.csv`, `/api/export.csv` (poori history). Hook,
+description aur tags tabhi bharte hain jab clips chat (Studio) se chune gaye hon;
+auto-selector ke clips ke ye columns khaali rehte hain.
+
 Studio ka purana "1:1" aspect aur "Pad" fit option (jo API ko
 kabhi valid nahi the) hata diye; square ab "Rounded square" fit hai.
 

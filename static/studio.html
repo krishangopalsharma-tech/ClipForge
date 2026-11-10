@@ -109,6 +109,15 @@
   .ovrow button{padding:8px 0}
   .clipcard .edit{padding:0 11px 11px}
   .clips.edit-list{grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
+  .gens{margin-top:12px; display:flex; flex-direction:column; gap:6px}
+  .gen{display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; font-size:13px;
+       background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:8px 12px}
+  .gen .when{color:var(--muted); font-family:ui-monospace,Consolas,monospace; font-size:12px}
+  .gen .src{flex:1 1 200px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  a.btn{display:inline-block; background:var(--accent); color:#0b0d12; border-radius:8px;
+        padding:7px 13px; font-size:13px; font-weight:600; text-decoration:none}
+  a.btn.ghost{background:transparent; color:var(--text); border:1px solid var(--line)}
+  a.btn.ghost:hover{border-color:var(--accent); color:var(--accent)}
 </style>
 </head>
 <body>
@@ -326,6 +335,10 @@
     </div>
     <div class="bar" id="rnBar" hidden><i></i></div>
     <div class="status" id="rnStatus"></div>
+    <div class="stack" id="rnExport" hidden>
+      <a class="btn" id="rnZip" href="#">&#11015; Download all clips + CSV (ZIP)</a>
+      <a class="btn ghost" id="rnCsv" href="#">CSV only</a>
+    </div>
     <div class="clips" id="clips"></div>
   </div>
 </section>
@@ -339,6 +352,7 @@
       <button class="ghost" id="edRefresh">Refresh list</button>
     </div>
     <div class="status" id="edStatus"></div>
+    <div class="gens" id="edGens"></div>
     <div class="clips edit-list" id="edList"></div>
     <div class="note">Needs the source video and its transcript to still be on disk (Storage page). Clips made before this feature existed cannot be edited; generate them again.</div>
   </div>
@@ -845,6 +859,7 @@ function listen(jobId) {
         say("rnStatus", (snap.clips || []).length + " clip(s) rendered.", "ok");
         setStep("s5", true, true);
         showClips(snap.clips || []);
+        showExport(snap.clip_id);
         loadEditList();
       }
     }
@@ -858,6 +873,16 @@ function listen(jobId) {
       else say("rnStatus", snap.error || "Lost connection to the render job.", "err");
     }).catch(() => say("rnStatus", "Lost connection to the render job.", "err"));
   };
+}
+
+/* The ZIP holds every clip of this render plus clips.csv, a tracking sheet with each
+   clip's title / hook / description / tags and blank platform, posted_at, post_url
+   and status columns to fill in as clips are uploaded. */
+function showExport(clipId) {
+  if (!clipId) return;
+  $("rnZip").href = "/api/export/" + clipId;
+  $("rnCsv").href = "/api/export/" + clipId + "/clips.csv";
+  $("rnExport").hidden = false;
 }
 
 function showClips(clips) {
@@ -1088,11 +1113,32 @@ function wireEditor(card, key) {
   };
 }
 
+function shortSource(label) {
+  const text = String(label || "").replace(/^https?:\/\//, "");
+  return text.length > 60 ? "…" + text.slice(-58) : text;
+}
+
+/* One row per past generation, with its ZIP + CSV, plus one CSV of everything. */
+function renderGenerations(entries) {
+  const rows = entries.filter((e) => (e.clips || []).some((c) => c.exists !== false)).map((e) => {
+    const n = (e.clips || []).filter((c) => c.exists !== false).length;
+    return `<div class="gen"><span class="when">${escapeHtml((e.created || "").replace("T", " ").slice(0, 16))}</span>
+      <span class="src" title="${escapeHtml(e.source || "")}">${escapeHtml(shortSource(e.source))}</span>
+      <span class="mono">${n} clip${n === 1 ? "" : "s"}</span>
+      <a class="btn" href="/api/export/${e.clip_id}">&#11015; ZIP + CSV</a>
+      <a class="btn ghost" href="/api/export/${e.clip_id}/clips.csv">CSV</a></div>`;
+  });
+  $("edGens").innerHTML = rows.length
+    ? rows.join("") + '<div><a class="btn ghost" href="/api/export.csv">CSV of every clip in your history</a></div>'
+    : "";
+}
+
 async function loadEditList() {
   say("edStatus", "Loading…");
   try {
     await loadEditorChoices();
     const entries = await jsonOrThrow(await fetch("/api/history"));
+    renderGenerations(entries);
     edit.clips = {};
     const cards = [];
     for (const e of entries) {

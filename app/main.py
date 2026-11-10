@@ -12,9 +12,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import subprocess
 import sys
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -22,13 +24,14 @@ from typing import Optional
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
-    FileResponse, JSONResponse, PlainTextResponse, StreamingResponse,
+    FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
 
 from . import (
-    captions, fonts, history, jobs, manual, mood, music, overlays, prefetch,
+    captions, export, fonts, history, jobs, manual, mood, music, overlays, prefetch,
     pretranscribe, profiles, rendering, sources, speech, storage, transcriber, uploads,
 )
 from .models import (
@@ -600,6 +603,64 @@ class RestyleRequest(BaseModel):
     clip_id: str
     index: int
     changes: ClipChanges
+
+
+def _entry_or_404(clip_id: str) -> dict:
+    if history.clip_path(clip_id, 0) is None:
+        raise HTTPException(status_code=400, detail="Invalid clip reference.")
+    for entry in history.list_entries():
+        if entry.get("clip_id") == clip_id:
+            return entry
+    raise HTTPException(status_code=404, detail="That generation is not in your history.")
+
+
+def _csv_response(data: bytes, filename: str) -> Response:
+    return Response(
+        content=data,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/export/{clip_id}")
+def export_generation(clip_id: str) -> FileResponse:
+    """Every clip of one generation in a ZIP, plus ``clips.csv``, a tracking sheet.
+
+    The CSV has each clip's title, hook, description, tags and score, how it was
+    cut, and blank platform / posted_at / post_url / status columns to fill in as
+    clips are uploaded. Its ``filename`` column matches the file's name in the ZIP.
+    """
+    entry = _entry_or_404(clip_id)
+    items = export.collect([entry])
+    if not items:
+        raise HTTPException(status_code=404, detail="None of this generation's clip files exist any more.")
+    fd, tmp = tempfile.mkstemp(suffix=".zip", prefix="clipforge-export-")
+    os.close(fd)
+    try:
+        export.build_zip(items, Path(tmp))
+    except Exception:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+    stamp = (entry.get("created") or "")[:10] or "clips"
+    return FileResponse(
+        tmp,
+        media_type="application/zip",
+        filename=f"clipforge-{stamp}-{clip_id[:8]}.zip",
+        background=BackgroundTask(lambda: Path(tmp).unlink(missing_ok=True)),
+    )
+
+
+@app.get("/api/export/{clip_id}/clips.csv")
+def export_generation_csv(clip_id: str) -> Response:
+    """Just the tracking sheet for one generation."""
+    entry = _entry_or_404(clip_id)
+    return _csv_response(export.build_csv(export.collect([entry])), f"clipforge-{clip_id[:8]}.csv")
+
+
+@app.get("/api/export.csv")
+def export_all_csv() -> Response:
+    """One tracking sheet for every clip in your history, newest generation first."""
+    return _csv_response(export.build_csv(export.collect(history.list_entries())), "clipforge-all-clips.csv")
 
 
 @app.post("/api/clip/restyle")

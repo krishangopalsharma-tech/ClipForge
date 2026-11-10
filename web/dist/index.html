@@ -20,6 +20,9 @@
     <a href="/storage" id="cf-storage-link" title="Free up disk space">
       <span>&#128190;</span> Storage
     </a>
+    <a href="/api/export.csv" id="cf-export-link" title="Download every clip of this batch as a ZIP, with a CSV to track your uploads" hidden>
+      <span>&#11015;</span> <b>All clips + CSV</b>
+    </a>
     <style>
       #cf-studio-link{
         position:fixed; right:18px; bottom:18px; z-index:9999;
@@ -41,6 +44,16 @@
       }
       #cf-storage-link:hover{border-color:#7c5cff; color:#fff}
 
+      #cf-export-link{
+        position:fixed; right:18px; bottom:106px; z-index:9999;
+        display:flex; align-items:center; gap:7px;
+        padding:9px 15px; border-radius:999px;
+        background:#1e212b; border:1px solid #3ecf8e66; color:#c9f5e0;
+        text-decoration:none; font:600 13px/1 Outfit,system-ui,sans-serif;
+        box-shadow:0 6px 18px #0007; transition:.15s;
+      }
+      #cf-export-link[hidden]{display:none}
+      #cf-export-link:hover{border-color:#3ecf8e; color:#fff}
       #cf-armed{
         position:fixed; top:14px; left:50%; transform:translateX(-50%); z-index:10000;
         display:none; align-items:center; gap:12px;
@@ -58,6 +71,44 @@
       #cf-armed button:hover{background:#ffffff24}
     </style>
 
+    <!-- Download all: when clips are on screen, link to a ZIP of them plus a tracking
+         CSV. The clip folder id is read from the clips' own URLs (/clips/<id>/<n>.mp4),
+         so this needs nothing from the React app. Several generations on screen (the
+         Library) link to the CSV of everything instead. -->
+    <script>
+    (function () {
+      "use strict";
+      var link = document.getElementById("cf-export-link");
+      var label = link && link.querySelector("b");
+      var re = /\/clips\/([0-9a-f]{32})\/\d+\.mp4/;
+      function ids() {
+        var found = {};
+        document.querySelectorAll("video, source, a[href]").forEach(function (el) {
+          var u = el.getAttribute("src") || el.getAttribute("href") || "";
+          var m = re.exec(u);
+          if (m) found[m[1]] = true;
+        });
+        return Object.keys(found);
+      }
+      function tick() {
+        if (!link) return;
+        var found = ids();
+        if (found.length === 1) {
+          link.href = "/api/export/" + found[0];
+          label.textContent = "All clips + CSV";
+          link.hidden = false;
+        } else if (found.length > 1) {
+          link.href = "/api/export.csv";
+          label.textContent = "CSV of all clips";
+          link.hidden = false;
+        } else {
+          link.hidden = true;
+        }
+      }
+      setInterval(tick, 1500);
+      tick();
+    })();
+    </script>
     <!-- Studio bridge -------------------------------------------------------
          Lets clips chosen in /studio render through THIS page, so the full
          caption / music / effects toolset and the live preview still apply.
