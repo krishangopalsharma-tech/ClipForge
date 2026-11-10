@@ -63,6 +63,19 @@ aati hai, aur jo clips skip hue unki wajah dikhti hai. "Which AI answered?" se
 `picked_by` (claude / chatgpt / gemini / other) clip ke saath save hota hai.
 Tests: `python\python.exe -m unittest discover -s tests`.
 
+**Transcription (Phase 2):** Hindi, Urdu aur Hinglish ab `large-v3` se
+transcribe hote hain (baaki sab `medium`). Pehli dafa ~3 GB download hota hai
+aur ~3 GB VRAM lagti hai; GPU par ek waqt mein ek hi model rehta hai. Language
+ko "Auto" par chhodein to model pehle se chuna nahi ja sakta — Studio ek tip
+dikhata hai agar Hindi/Urdu `medium` se decode hui ho. Env se badlein:
+`CLIPFORGE_WHISPER_MODEL`, `CLIPFORGE_WHISPER_MODEL_HINDUSTANI` (dono ek jaisi
+rakhein to swap band). Hinglish ka romaniser ab bina kisi library ke chalta
+hai (English loanwords, schwa deletion, punctuation). Jis video mein lagbhag
+koi bol nahi (8 se kam words ya 5 words/min se kam), uspar auto-selector saaf
+error deta hai; Studio mein apne chune hue clips phir bhi render ho jaate hain.
+Purane `hi`/`ur` transcripts `medium` ke hi cache mein rahenge — dobara
+transcribe karne ke liye storage page se transcript delete karein.
+
 API: `GET /api/transcript/{source_id}` · `GET /api/clip-prompt` ·
 `POST /api/manual-windows` · `POST /api/generate` mein `manual_windows`.
 

@@ -24,7 +24,7 @@ from typing import Dict, List, Optional
 
 from . import (
     captions, downloader, flashes, history, manual, music, pretranscribe, selector,
-    transcriber, uploads,
+    speech, transcriber, uploads,
 )
 from .clipper import ClipOptions, generate_clip, target_size
 from .models import (
@@ -305,6 +305,23 @@ def _run_pipeline(job: Job) -> None:
         caption_language = (
             forced if forced and forced != "auto" else transcript.get("language")
         )
+
+        # A video with next to no speech (music only, a muted mic) transcribes to
+        # a few stray words. The selector would score those and cut around them,
+        # which is worse than saying so. Clips the caller chose by hand are fine.
+        report = speech.speech_report(transcript)
+        if report["sparse"]:
+            if not req.manual_windows:
+                raise ClipGenerationError(
+                    f"There is almost no speech in this video ({report['words']} "
+                    f"words in {report['minutes']} min), so there is nothing for the "
+                    "selector to read. Pick the clips yourself in Studio, or use a "
+                    "video with talking in it."
+                )
+            logger.warning(
+                "[%s] sparse speech (%s words); rendering the supplied clips anyway.",
+                job.id, report["words"],
+            )
 
         # 3) Choose the clip windows. Either the caller supplied them (picked
         # outside ClipForge — see app/manual.py) or the local selector finds them.

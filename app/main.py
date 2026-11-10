@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 
 from . import (
     captions, fonts, history, jobs, manual, mood, music, prefetch,
-    pretranscribe, profiles, storage, transcriber, uploads,
+    pretranscribe, profiles, speech, storage, transcriber, uploads,
 )
 from .models import Device, GenerateRequest, InvalidVideoURLError, TranscriptionError
 from .paths import (
@@ -277,7 +277,14 @@ def get_transcript(
         )
 
     if format == "json":
-        return JSONResponse(transcript)
+        # `speech` / `model_hint` are derived, not stored: the Studio page uses
+        # them to warn about a video with no speech and about a Hindi/Urdu
+        # source decoded by a model that is not fit for it.
+        return JSONResponse({
+            **transcript,
+            "speech": speech.speech_report(transcript),
+            "model_hint": speech.model_hint(transcript),
+        })
 
     text = manual.format_transcript_text(transcript, source_id)
     return PlainTextResponse(

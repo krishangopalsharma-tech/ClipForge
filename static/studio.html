@@ -152,6 +152,7 @@
           <option value="en">English</option>
           <option value="ur">Urdu</option>
           <option value="hi">Hindi</option>
+          <option value="hinglish">Hinglish (Hindi, in Roman letters)</option>
           <option value="ar">Arabic</option>
           <option value="es">Spanish</option>
           <option value="fr">French</option>
@@ -474,9 +475,17 @@ async function probeTranscript() {
     const res = await fetch(url);
     if (!res.ok) { say("trStatus", "Not transcribed yet."); return false; }
     const t = await res.json();
+    const notes = [];
+    if (t.speech && t.speech.sparse) {
+      notes.push("Almost no speech found (" + t.speech.words + " words in " +
+                 t.speech.minutes + " min), so there is little for an AI to pick from.");
+    }
+    if (t.model_hint) notes.push(t.model_hint);
     say("trStatus",
         "Transcript ready — " + (t.segments || []).length + " segments, " +
-        mmss(t.duration || 0) + ".", "ok");
+        mmss(t.duration || 0) + (t.whisper_model ? " (" + t.whisper_model + ")" : "") + "." +
+        (notes.length ? " ⚠ " + notes.join(" ") : ""),
+        notes.length ? "warn" : "ok");
     bar("trBar", 1);
     setStep("s2", true, true);
     setStep("s3", true, false);

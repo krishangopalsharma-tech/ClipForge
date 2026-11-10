@@ -1,8 +1,10 @@
 """Local transcription with faster-whisper (word-level timestamps).
 
 Each request can pick its compute device (``auto``/``cuda``/``cpu``). Models are
-heavy (~1.5 GB for 'medium'), so we load one lazily per device and cache it for
-reuse. ``auto`` prefers CUDA (float16) and falls back to CPU (int8); an explicit
+heavy (~1.5 GB for 'medium', ~3 GB for 'large-v3'), so we load one lazily per
+device and cache it for reuse. Hindi/Urdu/Hinglish use a larger model than the
+rest (see ``app.speech``); a device holds one model at a time, so switching
+between the two replaces the cached one instead of filling the GPU with both. ``auto`` prefers CUDA (float16) and falls back to CPU (int8); an explicit
 ``cuda`` request fails with a clear message if the GPU cannot be initialised.
 No audio or text ever leaves the machine.
 """
@@ -53,10 +55,12 @@ _add_cuda_dll_directories()
 
 from faster_whisper import WhisperModel  # noqa: E402
 
+from . import speech  # noqa: E402
 from .models import TranscriptionError  # noqa: E402
 from .paths import TRANSCRIPTS_DIR  # noqa: E402
 
-MODEL_SIZE = "medium"
+# The default model (also what startup warms). Per-request choice: speech.model_for.
+MODEL_SIZE = speech.DEFAULT_MODEL
 
 # Per-device compute precision. float16 on the GPU, int8 on the CPU.
 _COMPUTE_TYPE = {"cuda": "float16", "cpu": "int8"}
@@ -65,6 +69,9 @@ _COMPUTE_TYPE = {"cuda": "float16", "cpu": "int8"}
 # requests is cheap after the first load. `_device` records the most recently
 # used device (drives the /health badge); `_cuda_available` is a cached probe.
 _models: dict[str, WhisperModel] = {}
+# Which model size each cached device model is, so a request for another size
+# replaces it rather than reusing the wrong one.
+_model_names: dict[str, str] = {}
 _device: str = "uninitialised"
 _cuda_available: Optional[bool] = None
 
@@ -137,32 +144,60 @@ def gpu_name() -> Optional[str]:
     return _gpu_name
 
 
-def is_loaded(device: str) -> bool:
-    """True if a model for this concrete device is already cached (warm)."""
-    return device in _models
+def is_loaded(device: str, model_size: Optional[str] = None) -> bool:
+    """True if a model for this concrete device is already cached (warm).
+
+    With ``model_size``, only a cached model of that size counts.
+    """
+    if device not in _models:
+        return False
+    return model_size is None or _model_names.get(device) == model_size
 
 
-def _load_on(device: str) -> WhisperModel:
-    """Load (or reuse the cached) model on a concrete device ('cuda'/'cpu')."""
+def has_model(model_size: str) -> bool:
+    """True if any device already holds this model size (no load/download needed)."""
+    return any(name == model_size for name in _model_names.values())
+
+
+def _load_on(device: str, model_size: Optional[str] = None) -> WhisperModel:
+    """Load (or reuse the cached) model on a concrete device ('cuda'/'cpu').
+
+    ``model_size`` defaults to MODEL_SIZE. If this device holds a model of a
+    different size it is dropped first, so VRAM never holds both. A transcription
+    already running on the old one keeps its own reference until it finishes.
+    """
     global _device
+    size = model_size or MODEL_SIZE
     with _load_lock:
-        if device in _models:
+        if device in _models and _model_names.get(device) == size:
             _device = device
             return _models[device]
+        if device in _models:
+            logger.info(
+                "Replacing whisper '%s' on %s with '%s'.",
+                _model_names.get(device), device, size,
+            )
+            _models.pop(device, None)
+            _model_names.pop(device, None)
+            import gc
+
+            gc.collect()
         compute = _COMPUTE_TYPE[device]
-        logger.info("Loading whisper '%s' on %s (%s)...", MODEL_SIZE, device, compute)
-        model = WhisperModel(MODEL_SIZE, device=device, compute_type=compute)
+        logger.info("Loading whisper '%s' on %s (%s)...", size, device, compute)
+        model = WhisperModel(size, device=device, compute_type=compute)
         _models[device] = model
+        _model_names[device] = size
         _device = device
-        logger.info("Whisper '%s' loaded on %s.", MODEL_SIZE, device)
+        logger.info("Whisper '%s' loaded on %s.", size, device)
         return model
 
 
-def load_model(device: str = "auto") -> WhisperModel:
+def load_model(device: str = "auto", model_size: Optional[str] = None) -> WhisperModel:
     """Load the whisper model for the requested device, caching per device.
 
     Args:
         device: 'auto' (GPU if available, else CPU), 'cuda', or 'cpu'.
+        model_size: a faster-whisper model name; None = the default model.
 
     'auto' tries the GPU first and falls back to the CPU. An explicit 'cuda'
     request does NOT silently fall back - it raises a clear error so the user
@@ -174,7 +209,7 @@ def load_model(device: str = "auto") -> WhisperModel:
 
     if requested == "cuda":
         try:
-            return _load_on("cuda")
+            return _load_on("cuda", model_size)
         except Exception as exc:  # noqa: BLE001 - GPU absent or cuDNN mismatched
             logger.warning("CUDA load failed (%s).", exc)
             raise TranscriptionError(
@@ -184,7 +219,7 @@ def load_model(device: str = "auto") -> WhisperModel:
 
     if requested == "cpu":
         try:
-            return _load_on("cpu")
+            return _load_on("cpu", model_size)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Failed to load whisper on CPU.")
             raise TranscriptionError(
@@ -194,7 +229,7 @@ def load_model(device: str = "auto") -> WhisperModel:
     # 'auto' (or anything unrecognised): prefer GPU, fall back to CPU.
     if cuda_available():
         try:
-            return _load_on("cuda")
+            return _load_on("cuda", model_size)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "CUDA load failed (%s). Falling back to CPU (int8). "
@@ -202,7 +237,7 @@ def load_model(device: str = "auto") -> WhisperModel:
                 exc,
             )
     try:
-        return _load_on("cpu")
+        return _load_on("cpu", model_size)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to load whisper on CPU as well.")
         raise TranscriptionError(
@@ -256,7 +291,7 @@ def transcribe_video(
     Raises:
         TranscriptionError: on any failure.
     """
-    model = load_model(device)
+    model_name = speech.model_for(language)
 
     # One transcription at a time. If another is running, surface a clear "waiting"
     # message so the UI shows a queued state instead of a frozen 0%.
@@ -264,6 +299,11 @@ def transcribe_video(
         progress(0.0, "Waiting for an earlier transcription to finish…")
     _transcribe_lock.acquire()
     try:
+        # Loaded inside the lock: swapping the cached model for another size
+        # while a different transcription is mid-pass would hold both in VRAM.
+        if progress and not has_model(model_name):
+            progress(0.0, f"Loading Whisper '{model_name}' (the first use downloads it)...")
+        model = load_model(device, model_name)
         segments_gen, info = model.transcribe(
             str(video_path),
             word_timestamps=True,
@@ -315,6 +355,9 @@ def transcribe_video(
             "text": " ".join(text_parts).strip(),
             "words": words,
             "segments": segments,
+            # Recorded so the UI can tell when a Hindi/Urdu source was decoded by
+            # a model that is not fit for it (speech.model_hint).
+            "whisper_model": model_name,
         }
     except Exception as exc:  # noqa: BLE001
         logger.exception("Transcription failed for %s", video_path)
