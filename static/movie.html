@@ -328,22 +328,39 @@ $("whisper").onclick = async () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ source_id: sourceId, device: "auto" }),
     });
-    const id = d.pretranscribe_id;
-    clearInterval(poll);
-    poll = setInterval(async () => {
-      try {
-        const s = await api(`/api/pretranscribe/${id}`);
-        $("b2").firstElementChild.style.width = Math.round((s.progress || 0) * 100) + "%";
-        say("m2", s.message || "Working…");
-        if (s.status === "done") {
-          clearInterval(poll); say("m2", "Transcribed.", "ok"); open("s3");
-        } else if (s.status === "error") {
-          clearInterval(poll); say("m2", s.error || "Transcription failed.", "err");
-        }
-      } catch (err) { clearInterval(poll); say("m2", err.message, "err"); }
-    }, 1500);
+    try { localStorage.setItem(TR_JOB_KEY, JSON.stringify({ id: d.pretranscribe_id, sourceId })); } catch (_) {}
+    watchTranscribe(d.pretranscribe_id);
   } catch (err) { say("m2", err.message, "err"); }
 };
+
+// Follow a Whisper run. Its id is remembered, so a reload (or coming back to
+// this tab) reconnects to the run still going on the server instead of
+// showing nothing while the GPU works.
+const TR_JOB_KEY = "cf-movie-transcribe-job";
+let trPoll = null;
+function watchTranscribe(id) {
+  $("b2").style.display = "block";
+  clearInterval(trPoll);
+  const done = () => { clearInterval(trPoll); try { localStorage.removeItem(TR_JOB_KEY); } catch (_) {} };
+  const tick = async () => {
+    try {
+      const s = await api(`/api/pretranscribe/${id}`);
+      $("b2").firstElementChild.style.width = Math.round((s.progress || 0) * 100) + "%";
+      say("m2", s.message || "Working…");
+      if (s.status === "done") {
+        done(); say("m2", "Transcribed.", "ok"); open("s3"); open("s4");
+      } else if (s.status === "error") {
+        done(); say("m2", s.error || "Transcription failed.", "err");
+      }
+    } catch (err) {
+      done();
+      say("m2", "Lost track of the transcription (was the app restarted?). Press Transcribe again — "
+        + "it picks up a run that is still going.", "warn");
+    }
+  };
+  trPoll = setInterval(tick, 1500);
+  tick();
+}
 // How many transcript lines a video has (0 when none). The endpoint returns
 // the paste-ready text, one "[id] start-end text" line per segment, not JSON.
 async function transcriptLines(id) {
@@ -705,6 +722,11 @@ async function restoreDraft() {
       open("s3");
       open("s4");
       if ($("json").value.trim()) $("check").click();   // re-checks and opens step 5
+    } else {
+      // No transcript yet: maybe Whisper is still on it from before the reload.
+      let tr = null;
+      try { tr = JSON.parse(localStorage.getItem(TR_JOB_KEY) || "null"); } catch (_) {}
+      if (tr && tr.sourceId === sourceId) watchTranscribe(tr.id);
     }
   } catch (_) { /* no transcript yet: step 2 is where to go */ }
 }
