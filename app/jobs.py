@@ -23,14 +23,12 @@ import uuid
 from typing import Dict, List, Optional
 
 from . import (
-    captions, downloader, flashes, history, manual, music, pretranscribe, reframe,
-    selector, speech, transcriber, uploads,
+    downloader, history, manual, pretranscribe, rendering, selector, speech,
+    transcriber, uploads,
 )
-from .clipper import ClipOptions, generate_clip, target_size
 from .models import (
     LANGUAGE_NAMES,
     ClipGenerationError,
-    FitMode,
     GenerateRequest,
     InvalidVideoURLError,
     TranscriptionError,
@@ -351,21 +349,9 @@ def _run_pipeline(job: Job) -> None:
                 )
             job.set_stage("selecting", 1.0, f"Found {len(windows)} clip(s) to render.")
 
-        # 4) Per clip: build ASS captions + render with ffmpeg. The caption canvas
-        # must match the actual output frame (1:1 in square mode, aspect otherwise).
-        words = transcript.get("words") or []
-        caption_overrides = (
-            req.caption_overrides.model_dump() if req.caption_overrides else None
-        )
-        cinematic = req.cinematic.model_dump() if req.cinematic else None
-        # Resolve the background-music track once (None if unset / missing).
-        music_path = None
-        if req.music_track:
-            try:
-                music_path = music.resolve_track(req.music_track)
-            except InvalidVideoURLError:
-                logger.warning("[%s] music track %r not found; skipping.", job.id, req.music_track)
-        width, height = target_size(req.aspect_ratio, req.fit_mode)
+        # 4) Per clip: render it from its recipe (app/rendering.py). The same code
+        # re-renders the clip later when the user edits it, so a clip looks the
+        # same whichever way it was made.
         clip_dir = CLIPS_DIR / clip_id
         clip_dir.mkdir(parents=True, exist_ok=True)
         # Caption files ffmpeg reads live here, not beside the finished clips —
@@ -386,129 +372,13 @@ def _run_pipeline(job: Job) -> None:
                 f"Rendering clip {index + 1} of {total}...",
             )
 
-            clip_words = [w for w in words if w["end"] > start and w["start"] < end]
-
-            # Tag speaker onto words if speaker_segments is available
-            spk_segs = win.get("speaker_segments") or {}
-            all_segs = transcript.get("segments") or []
-            if spk_segs:
-                seg_to_spk = {}
-                for spk, sids in spk_segs.items():
-                    for sid in sids:
-                        seg_to_spk[sid] = spk
-                for w in clip_words:
-                    if not w.get("speaker"):
-                        for s in all_segs:
-                            if s["start"] <= w["start"] <= s["end"] + 0.05:
-                                if s["id"] in seg_to_spk:
-                                    w["speaker"] = seg_to_spk[s["id"]]
-                                break
-
-            punchline_words = win.get("punchline_words") or []
-            characters = win.get("characters") or []
-
-            # Vertical output only: look at the footage and decide how to fit it
-            # (follow a face, or the whole picture over a blur). Never fails the clip.
-            plan = None
-            if req.fit_mode in (FitMode.AUTO, FitMode.TRACK, FitMode.BLUR):
-                job.set_stage(
-                    "rendering", index / total,
-                    f"Looking at clip {index + 1} of {total} to frame it...",
-                )
-                plan = reframe.plan_reframe(
-                    source_mp4, start, end, width, height,
-                    req.fit_mode.value, work_dir, f"{index}",
-                )
-                logger.info("[%s] clip %d reframe: %s (%s)", job.id, index, plan.mode, plan.reason)
-
-            ass_path = work_dir / f"{index}.ass"
-            captions.build_ass(
-                words=clip_words,
-                style_preset=req.caption_style,
-                video_w=width,
-                video_h=height,
-                out_path=ass_path,
-                clip_start=start,
-                overrides=caption_overrides,
-                fit_mode=req.fit_mode.value,
-                punchline_words=punchline_words,
-                characters=characters,
+            recipe = rendering.make_recipe(req, win, source_id, start, end)
+            plan = rendering.render_clip(
+                recipe, source_mp4, transcript, clip_id, index, clip_dir, work_dir,
+                status=lambda msg, i=index: job.set_stage(
+                    "rendering", i / total, f"Clip {i + 1} of {total}: {msg}"
+                ),
             )
-
-            opts = ClipOptions(
-                aspect_ratio=req.aspect_ratio,
-                fit_mode=req.fit_mode,
-                ass_path=ass_path,
-                clip_id=clip_id,
-                index=index,
-                bar_text=req.bar_text,
-                bar_text_color=req.bar_text_color or "#FFFFFF",
-                bar_text_anim=req.bar_text_anim or "none",
-                cinematic=cinematic,
-                music_path=music_path,
-                music_volume=req.music_volume if req.music_volume is not None else 35.0,
-                music_duck=req.music_duck if req.music_duck is not None else 70.0,
-                music_start=req.music_start if req.music_start is not None else 0.0,
-                signature=req.signature.model_dump() if req.signature else None,
-                reframe=plan,
-            )
-
-            # Check if flash outro is enabled or requested
-            do_flash = bool(req.flash_outro or (win.get("climax_time") and req.flash_outro is not False))
-            rendered_ok = False
-            if do_flash:
-                try:
-                    flash_imgs = flashes.find_character_images(characters)
-                    if len(flash_imgs) < 4:
-                        extracted = flashes.extract_fallback_keyframes(
-                            source_path=source_mp4,
-                            start=start,
-                            end=end,
-                            count=6,
-                            work_dir=work_dir / f"flashes_{index}",
-                            width=width,
-                            height=height,
-                        )
-                        flash_imgs.extend(extracted)
-
-                    if flash_imgs:
-                        climax_end = float(win["climax_time"]) + 0.3 if win.get("climax_time") else end
-                        climax_end = max(start + 2.0, min(end, climax_end))
-
-                        diag_clip = work_dir / f"dialogue_{index}.mp4"
-                        outro_clip = work_dir / f"outro_{index}.mp4"
-                        final_clip = (CLIPS_DIR / clip_id / f"{index}.mp4").resolve()
-
-                        generate_clip(source_mp4, start, climax_end, opts, out_path=diag_clip)
-
-                        outro_music = flashes.resolve_edit_music(req.flash_music_track)
-                        flashes.render_flash_outro(
-                            images=flash_imgs,
-                            output_path=outro_clip,
-                            width=width,
-                            height=height,
-                            beat_duration=0.35,
-                            music_track=outro_music,
-                        )
-
-                        flashes.concat_main_and_outro(diag_clip, outro_clip, final_clip)
-                        rendered_ok = True
-                except Exception as exc:
-                    logger.warning(
-                        "[%s] flash outro generation failed (%s); falling back to normal clip",
-                        job.id,
-                        exc,
-                    )
-
-            if not rendered_ok:
-                generate_clip(source_mp4, start, end, opts)
-
-            # Copy generated ASS subtitle file alongside finished clip
-            try:
-                import shutil
-                shutil.copy2(ass_path, clip_dir / f"{index}.ass")
-            except Exception:
-                pass
 
             title = win.get("title") or f"Clip {index + 1}"
             clip = {
@@ -520,6 +390,8 @@ def _run_pipeline(job: Job) -> None:
                 "subtitle_url": f"/clips/{clip_id}/{index}.ass",
                 "language": caption_language,
                 "filename": download_filename(title, caption_language, index),
+                # Everything needed to render this clip again with changes.
+                "recipe": recipe,
             }
             # Post-ready copy and provenance from a chat-picked clip. Absent on
             # clips the local selector found, so older history entries and the

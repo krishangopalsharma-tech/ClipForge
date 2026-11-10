@@ -153,6 +153,33 @@ def list_entries() -> list:
     return entries
 
 
+def get_clip(clip_id: str, index: int):
+    """``(entry, clip)`` for one clip in history, or ``(None, None)``."""
+    with _LOCK:
+        for entry in _load():
+            if entry.get("clip_id") != clip_id:
+                continue
+            for clip in entry.get("clips", []):
+                if clip.get("index") == index:
+                    return entry, clip
+    return None, None
+
+
+def update_clip(clip_id: str, index: int, fields: dict) -> Optional[dict]:
+    """Merge ``fields`` into one clip's history record; return the new record."""
+    with _LOCK:
+        entries = _load()
+        for entry in entries:
+            if entry.get("clip_id") != clip_id:
+                continue
+            for clip in entry.get("clips", []):
+                if clip.get("index") == index:
+                    clip.update(fields)
+                    _save(entries)
+                    return dict(clip)
+    return None
+
+
 def remove_clip(clip_id: str, index: int) -> bool:
     """Delete one clip file and drop it from history. Returns True if a file went."""
     path = clip_path(clip_id, index, find_entry_dir(clip_id))

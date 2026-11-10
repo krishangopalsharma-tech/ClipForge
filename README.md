@@ -93,7 +93,25 @@ Follow the face, Full picture over blur, Centre crop, Rounded square. Main
 dashboard (`web/dist`) abhi sirf crop/square bhejta hai; API par
 `fit_mode` = `auto` / `track` / `blur` kaam karta hai. Thresholds
 (`MIN_FACE_FRACTION`, `GROUP_RATIO`, `DEAD_ZONE`, `MAX_SPEED`…) `app/reframe.py`
-ke upar hain. Studio ka purana "1:1" aspect aur "Pad" fit option (jo API ko
+ke upar hain. **Clips edit karein (Phase 4):** har naye clip ke saath uski *recipe* save hoti
+hai (source, times, framing, caption style, music, look, signature, overlays).
+Studio ka step 6 "Edit your clips" kisi bhi clip par framing, caption style/
+position, music, colour grade (vignette, grain, glow), signature, **logos aur
+text** (position/size/kab dikhna), aur cut (start/end) badalne deta hai — sirf
+wahi clip dobara render hota hai, source se. Na dobara download, na dobara
+transcribe, na koi AI. Purana file tab tak nahi badalta jab tak naya render
+poora na ho; fail hua to clip jaisa tha waisa rehta hai. Logos `assets/overlays`
+mein hote hain (PNG transparent best; upload button bhi hai). API:
+`POST /api/clip/restyle` `{clip_id, index, changes}`; `GET /api/overlays`,
+`POST /api/overlays/upload`. Ye tab kaam karta hai jab source video aur uska
+transcript Storage page se delete na hue hon, aur sirf naye clips par — purane
+clips (recipe ke bina) ko dobara generate karna hoga. Overlay text Roboto Bold
+mein banta hai, isliye Devanagari text nahi chalega (Hinglish/Roman chalega).
+Saath mein ek purana bug theek kiya: `/clips/<id>/<n>.mp4` galat folder mein
+dhoondta tha aur `WORK_DIR` na hone se crash karta tha, is wajah se clip preview/
+download hota hi nahi tha.
+
+Studio ka purana "1:1" aspect aur "Pad" fit option (jo API ko
 kabhi valid nahi the) hata diye; square ab "Rounded square" fit hai.
 
 API: `GET /api/transcript/{source_id}` · `GET /api/clip-prompt` ·

@@ -94,6 +94,21 @@
     border-radius:8px; padding:11px 13px; font-size:13px; color:var(--muted); margin-top:12px;
   }
   code{background:var(--panel-2); padding:1px 5px; border-radius:4px; font-size:12px}
+  .editor{border-top:1px solid var(--line); padding:12px 11px 12px; background:#14161d}
+  .editor .row{margin-bottom:10px}
+  .editor .row > *{flex:1 1 120px}
+  .editor h4{margin:14px 0 8px; font-size:12px; color:var(--muted); font-weight:600;
+             text-transform:uppercase; letter-spacing:.06em}
+  .editor label.chk{display:inline-flex; align-items:center; gap:6px; margin:0 12px 0 0;
+                    font-size:13px; color:var(--text); cursor:pointer}
+  .editor label.chk input{width:auto}
+  .ovrow{display:grid; grid-template-columns:44px minmax(110px,1.6fr) repeat(4,minmax(52px,.6fr)) 34px;
+         gap:6px; align-items:end; margin-bottom:8px}
+  .ovrow .kind{font-size:12px; color:var(--muted); padding-bottom:10px}
+  .ovrow input[type=color]{padding:2px; height:38px}
+  .ovrow button{padding:8px 0}
+  .clipcard .edit{padding:0 11px 11px}
+  .clips.edit-list{grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
 </style>
 </head>
 <body>
@@ -311,6 +326,20 @@
     <div class="bar" id="rnBar" hidden><i></i></div>
     <div class="status" id="rnStatus"></div>
     <div class="clips" id="clips"></div>
+  </div>
+</section>
+
+<!-- 6 ------------------------------------------------------------------ -->
+<section class="step" id="s6">
+  <h2><span class="num">6</span> Edit your clips</h2>
+  <p class="hint">Change framing, captions, music, look, logos or the cut of any finished clip. Only the clip is rendered again: nothing is re-downloaded or re-transcribed, and no AI is called.</p>
+  <div class="body">
+    <div class="stack" style="margin-top:0">
+      <button class="ghost" id="edRefresh">Refresh list</button>
+    </div>
+    <div class="status" id="edStatus"></div>
+    <div class="clips edit-list" id="edList"></div>
+    <div class="note">Needs the source video and its transcript to still be on disk (Storage page). Clips made before this feature existed cannot be edited; generate them again.</div>
   </div>
 </section>
 
@@ -780,6 +809,7 @@ function listen(jobId) {
         say("rnStatus", (snap.clips || []).length + " clip(s) rendered.", "ok");
         setStep("s5", true, true);
         showClips(snap.clips || []);
+        loadEditList();
       }
     }
   };
@@ -809,6 +839,258 @@ function showClips(clips) {
       </div>
     </div>`).join("");
 }
+
+/* ---------- step 6: edit finished clips -------------------------------- */
+const FITS = [
+  ["auto", "Auto (follow the face, or blur)"], ["track", "Follow the face"],
+  ["blur", "Full picture over blur"], ["crop", "Centre crop"], ["square", "Rounded square reel"],
+];
+const GRADES = ["none", "warm", "cool", "teal_orange", "vintage", "vibrant", "bw"];
+const edit = { styles: [], tracks: [], logos: [], clips: {} };
+
+function opt(value, label, selected) {
+  return `<option value="${escapeHtml(value)}"${selected ? " selected" : ""}>${escapeHtml(label)}</option>`;
+}
+function pct(v) { return Math.round(v * 1000) / 10; }   // 0.85 -> 85
+
+async function loadEditorChoices() {
+  const get = async (url, pick) => {
+    try { return pick(await (await fetch(url)).json()); } catch (_) { return []; }
+  };
+  edit.styles = await get("/api/caption-styles", (d) => d);
+  edit.tracks = await get("/api/music", (d) => d.tracks || []);
+  edit.logos = await get("/api/overlays", (d) => d.logos || []);
+}
+
+function overlayRowHtml(o) {
+  const xy = `
+    <div><label>X %</label><input type="number" data-k="x" min="0" max="100" step="1" value="${pct(o.x)}"></div>
+    <div><label>Y %</label><input type="number" data-k="y" min="0" max="100" step="1" value="${pct(o.y)}"></div>`;
+  const size = o.type === "logo"
+    ? `<div><label>Width %</label><input type="number" data-k="w" min="2" max="100" step="1" value="${pct(o.w)}"></div>`
+    : `<div><label>Size %</label><input type="number" data-k="size" min="1.5" max="15" step="0.5" value="${pct(o.size)}"></div>`;
+  const timing = `<div><label>From s</label><input type="number" data-k="start" min="0" step="0.5" value="${o.start ?? ""}" placeholder="all"></div>`;
+  const main = o.type === "logo"
+    ? `<div><label>Logo</label><select data-k="file">${
+        edit.logos.length
+          ? edit.logos.map((l) => opt(l.file, l.name, l.file === o.file)).join("")
+          : opt("", "(upload a logo first)", true)}</select></div>`
+    : `<div><label>Text</label><div style="display:flex; gap:6px">
+         <input type="text" data-k="text" maxlength="120" value="${escapeHtml(o.text || "")}">
+         <input type="color" data-k="color" value="${escapeHtml((o.color || "#FFFFFF").toLowerCase())}" style="width:46px"></div></div>`;
+  return `<div class="ovrow" data-type="${o.type}">
+    <div class="kind">${o.type === "logo" ? "Logo" : "Text"}</div>${main}${xy}${size}${timing}
+    <button class="ghost" data-act="rm" title="Remove">&times;</button></div>`;
+}
+
+function readOverlays(panel) {
+  return [...panel.querySelectorAll(".ovrow")].map((row) => {
+    const v = (k) => { const el = row.querySelector(`[data-k="${k}"]`); return el ? el.value : ""; };
+    const num = (k) => (v(k) === "" ? undefined : parseFloat(v(k)));
+    const item = { type: row.dataset.type, x: num("x") / 100, y: num("y") / 100 };
+    if (item.type === "logo") { item.file = v("file"); item.w = num("w") / 100; }
+    else { item.text = v("text"); item.color = v("color"); item.size = num("size") / 100; }
+    const start = num("start");
+    if (start !== undefined) item.start = start;
+    return item;
+  });
+}
+
+function editorHtml(r) {
+  const cin = r.cinematic || {};
+  const cap = r.caption_overrides || {};
+  const sig = r.signature || {};
+  const chk = (k, label) =>
+    `<label class="chk"><input type="checkbox" data-f="${k}"${cin[k] ? " checked" : ""}> ${label}</label>`;
+  return `<div class="editor">
+    <h4>Framing</h4>
+    <div class="row">
+      <div><label>Fit</label><select data-f="fit">${FITS.map(([v, l]) => opt(v, l, r.fit_mode === v)).join("")}</select></div>
+      <div><label>Aspect (ignored by the square reel)</label><select data-f="aspect">
+        ${opt("9:16", "9:16 vertical", r.aspect_ratio === "9:16")}${opt("16:9", "16:9 wide", r.aspect_ratio === "16:9")}</select></div>
+    </div>
+    <h4>Captions</h4>
+    <div class="row">
+      <div><label>Style</label><select data-f="style">${
+        edit.styles.map((s) => opt(s.id, s.label, s.id === r.caption_style)).join("")}</select></div>
+      <div><label>Position</label><select data-f="capPos">${
+        ["", "top", "center", "bottom"].map((v) => opt(v, v || "(as the style)", (cap.position || "") === v)).join("")}</select></div>
+    </div>
+    <h4>Music</h4>
+    <div class="row">
+      <div><label>Track</label><select data-f="music">${opt("", "None (dialogue only)", !r.music_track)}${
+        edit.tracks.map((t) => opt(t.file, t.name, t.file === r.music_track)).join("")}</select></div>
+      <div><label>Volume (0-100)</label><input type="number" data-f="musicVol" min="0" max="100" value="${r.music_volume ?? 35}"></div>
+    </div>
+    <h4>Look</h4>
+    <div class="row">
+      <div><label>Colour grade</label><select data-f="grade">${
+        GRADES.map((g) => opt(g, g.replace("_", " "), (cin.color_grade || "none") === g)).join("")}</select></div>
+      <div style="flex:2 1 260px; padding-bottom:9px">${chk("vignette", "Vignette")}${chk("grain", "Grain")}${chk("glow", "Glow")}${chk("bottom_gradient", "Bottom shade")}</div>
+    </div>
+    <div class="row"><div><label>Signature / handle (blank = none)</label>
+      <input type="text" data-f="sig" maxlength="60" value="${sig.enabled ? escapeHtml(sig.text || "") : ""}" placeholder="@yourhandle"></div></div>
+    <h4>Logos and text</h4>
+    <div data-f="overlays">${(r.overlays || []).map(overlayRowHtml).join("")}</div>
+    <div class="stack" style="margin-top:6px">
+      <button class="ghost" data-act="add-logo">+ Logo</button>
+      <button class="ghost" data-act="add-text">+ Text</button>
+      <button class="ghost" data-act="upload-logo">Upload a logo&hellip;</button>
+      <input type="file" data-f="logoFile" accept="image/png,image/jpeg,image/webp" hidden>
+    </div>
+    <h4>Cut (seconds into the source video)</h4>
+    <div class="row">
+      <div><label>Start</label><input type="number" data-f="start" step="0.1" min="0" value="${r.start}"></div>
+      <div><label>End</label><input type="number" data-f="end" step="0.1" min="0" value="${r.end}"></div>
+    </div>
+    <div class="stack"><button data-act="apply">Apply and re-render</button></div>
+    <div class="status" data-f="status"></div>
+  </div>`;
+}
+
+function collectChanges(panel, r) {
+  const f = (k) => panel.querySelector(`[data-f="${k}"]`);
+  const changes = {
+    fit_mode: f("fit").value,
+    aspect_ratio: f("aspect").value,
+    caption_style: f("style").value,
+    music_track: f("music").value || null,
+    music_volume: parseFloat(f("musicVol").value) || 0,
+    overlays: readOverlays(panel),
+  };
+
+  // Caption overrides: keep everything the clip already had except the position.
+  const cap = {};
+  Object.entries(r.caption_overrides || {}).forEach(([k, v]) => {
+    if (v !== null && k !== "position") cap[k] = v;
+  });
+  if (f("capPos").value) cap.position = f("capPos").value;
+  changes.caption_overrides = Object.keys(cap).length ? cap : null;
+
+  const effects = ["vignette", "grain", "glow", "bottom_gradient"];
+  const cin = Object.assign({}, r.cinematic || {});
+  cin.color_grade = f("grade").value;
+  effects.forEach((k) => { cin[k] = f(k).checked; });
+  const any = cin.color_grade !== "none" || effects.some((k) => cin[k]);
+  changes.cinematic = any ? cin : null;
+
+  const handle = f("sig").value.trim();
+  changes.signature = handle
+    ? Object.assign({}, r.signature || {}, { enabled: true, text: handle })
+    : (r.signature ? Object.assign({}, r.signature, { enabled: false }) : null);
+
+  const start = parseFloat(f("start").value), end = parseFloat(f("end").value);
+  if (!isNaN(start) && Math.abs(start - r.start) > 0.001) changes.start = start;
+  if (!isNaN(end) && Math.abs(end - r.end) > 0.001) changes.end = end;
+  return changes;
+}
+
+function wireEditor(card, key) {
+  const panel = card.querySelector(".editor");
+  const rec = () => edit.clips[key];
+  const status = (msg, kind) => {
+    const el = panel.querySelector('[data-f="status"]');
+    el.textContent = msg || "";
+    el.className = "status" + (kind ? " " + kind : "");
+  };
+  const list = panel.querySelector('[data-f="overlays"]');
+  const addRow = (o) => list.insertAdjacentHTML("beforeend", overlayRowHtml(o));
+
+  panel.addEventListener("click", async (ev) => {
+    const act = ev.target.dataset && ev.target.dataset.act;
+    if (!act) return;
+    if (act === "rm") {
+      ev.target.closest(".ovrow").remove();
+    } else if (act === "add-logo") {
+      addRow({ type: "logo", file: (edit.logos[0] || {}).file, x: 0.85, y: 0.10, w: 0.18 });
+    } else if (act === "add-text") {
+      addRow({ type: "text", text: "Follow for more", x: 0.5, y: 0.90, size: 0.045, color: "#FFFFFF" });
+    } else if (act === "upload-logo") {
+      panel.querySelector('[data-f="logoFile"]').click();
+    } else if (act === "apply") {
+      const btn = ev.target;
+      btn.disabled = true;
+      status("Rendering… about as long as the first render of this clip.");
+      try {
+        const res = await jsonOrThrow(await fetch("/api/clip/restyle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            clip_id: rec().clipId,
+            index: rec().clip.index,
+            changes: collectChanges(panel, rec().clip.recipe),
+          }),
+        }));
+        rec().clip = res.clip;
+        card.querySelector("video").src = res.clip.url;
+        const note = res.clip.reframe ? " Framing: " + res.clip.reframe.mode + "." : "";
+        status("Done." + note, "ok");
+        panel.querySelector('[data-f="start"]').value = res.clip.recipe.start;
+        panel.querySelector('[data-f="end"]').value = res.clip.recipe.end;
+      } catch (err) {
+        status(err.message, "err");
+      } finally {
+        btn.disabled = false;
+      }
+    }
+  });
+
+  panel.querySelector('[data-f="logoFile"]').onchange = async (ev) => {
+    const file = ev.target.files[0];
+    if (!file) return;
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      await jsonOrThrow(await fetch("/api/overlays/upload", { method: "POST", body: form }));
+      await loadEditorChoices();
+      list.innerHTML = readOverlays(panel).map(overlayRowHtml).join("");
+      status("Logo uploaded. Pick it from the Logo list.", "ok");
+    } catch (err) {
+      status(err.message, "err");
+    }
+    ev.target.value = "";
+  };
+}
+
+async function loadEditList() {
+  say("edStatus", "Loading…");
+  try {
+    await loadEditorChoices();
+    const entries = await jsonOrThrow(await fetch("/api/history"));
+    edit.clips = {};
+    const cards = [];
+    for (const e of entries) {
+      for (const c of e.clips || []) {
+        if (!c.recipe || c.exists === false) continue;
+        const key = e.clip_id + ":" + c.index;
+        edit.clips[key] = { clipId: e.clip_id, clip: c };
+        cards.push(`<div class="clip clipcard" data-key="${key}">
+          <video src="${c.url}" controls preload="metadata"></video>
+          <div class="meta"><div class="t">${escapeHtml(c.title)}</div>
+            <div class="mono">${mmss(c.recipe.start)} &rarr; ${mmss(c.recipe.end)} of the source</div></div>
+          <div class="edit"><button class="ghost" data-act="open">Edit</button></div></div>`);
+      }
+    }
+    $("edList").innerHTML = cards.join("");
+    say("edStatus",
+        cards.length ? cards.length + " editable clip(s)." : "No editable clips yet. Render some in step 5.",
+        cards.length ? "ok" : "");
+    $("edList").querySelectorAll(".clipcard").forEach((card) => {
+      card.querySelector('[data-act="open"]').onclick = (ev) => {
+        const existing = card.querySelector(".editor");
+        if (existing) { existing.remove(); ev.target.textContent = "Edit"; return; }
+        const key = card.dataset.key;
+        card.insertAdjacentHTML("beforeend", editorHtml(edit.clips[key].clip.recipe));
+        ev.target.textContent = "Close";
+        wireEditor(card, key);
+      };
+    });
+  } catch (err) {
+    say("edStatus", err.message, "err");
+  }
+}
+$("edRefresh").onclick = loadEditList;
+loadEditList();
 
 /* ---------- restore ----------------------------------------------------- */
 (function restore() {

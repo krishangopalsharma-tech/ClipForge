@@ -241,6 +241,35 @@ class Signature(BaseModel):
     opacity: Optional[float] = Field(default=75, ge=0, le=100, description="Opacity in %.")
 
 
+class ClipChanges(BaseModel):
+    """Edits to a finished clip (POST /api/clip/restyle).
+
+    Only the fields that are *present* change the clip; ``null`` clears one that
+    can be cleared (music, look, signature). Everything else stays as it was, and
+    the clip is rendered again from the source video and its cached transcript.
+    """
+
+    aspect_ratio: Optional[AspectRatio] = None
+    fit_mode: Optional[FitMode] = None
+    caption_style: Optional[str] = None
+    caption_overrides: Optional[CaptionOverrides] = None
+    cinematic: Optional[CinematicEffects] = None
+    music_track: Optional[str] = None
+    music_volume: Optional[float] = Field(default=None, ge=0, le=100)
+    music_duck: Optional[float] = Field(default=None, ge=0, le=100)
+    music_start: Optional[float] = Field(default=None, ge=0)
+    signature: Optional[Signature] = None
+    bar_text: Optional[str] = None
+    bar_text_color: Optional[str] = None
+    bar_text_anim: Optional[str] = None
+    overlays: Optional[List[dict]] = Field(
+        default=None, description="Logos and text blocks; see app.overlays."
+    )
+    start: Optional[float] = Field(default=None, ge=0, description="New start, seconds into the source.")
+    end: Optional[float] = Field(default=None, ge=0, description="New end, seconds into the source.")
+    flash_outro: Optional[bool] = None
+
+
 class ManualWindow(BaseModel):
     """One clip chosen outside ClipForge (e.g. by Claude or Gemini reading the
     exported transcript).

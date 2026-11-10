@@ -12,14 +12,15 @@ ignored in square mode (the canvas is always 9:16).
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
-from . import effects
+from . import effects, overlays
 from .models import AspectRatio, ClipGenerationError, FitMode
 from .reframe import ReframePlan
 from .paths import CLIPS_DIR, FONTS_DIR, MASKS_DIR
@@ -108,6 +109,8 @@ class ClipOptions:
     music_start: float = 0.0           # seconds into the track to start from (beat-aligned)
     signature: Optional[dict] = None   # burned-in watermark (see app.models.Signature)
     reframe: Optional[ReframePlan] = None  # face-follow / blur layout (see app.reframe)
+    overlays: List[dict] = field(default_factory=list)  # logos / text (see app.overlays)
+    logo_base: int = 1                 # ffmpeg input index of the first logo (set by generate_clip)
 
 
 def _rel_for_filter(target: Path, start_dir: Path) -> str:
@@ -171,6 +174,52 @@ def _signature_stages(in_label: str, sig: Optional[dict], w: int, h: int, work_d
     return [stage], "sig"
 
 
+def _overlay_stages(in_label: str, opts: ClipOptions, w: int, h: int, work_dir: Path) -> tuple[list[str], str]:
+    """Logos (``overlay``) and text blocks (``drawtext``), in list order.
+
+    Positions are fractions of the frame, the centre of the item, so the same
+    list works on every output format. A logo is the next ffmpeg input after
+    the source/mask/music (``opts.logo_base`` + its order among the logos); the
+    caller added them with ``-loop 1`` so a still image lasts the whole clip.
+    """
+    stages: list[str] = []
+    last = in_label
+    logo_n = 0
+    for k, item in enumerate(opts.overlays or []):
+        enable = ""
+        start, end = item.get("start"), item.get("end")
+        if end is not None:
+            enable = f":enable='between(t\\,{float(start or 0):.3f}\\,{float(end):.3f})'"
+        elif start is not None:
+            enable = f":enable='gte(t\\,{float(start):.3f})'"
+        opacity = float(item.get("opacity", 1.0))
+        label = f"ovl{k}"
+        if item["type"] == "logo":
+            idx = opts.logo_base + logo_n
+            logo_n += 1
+            width = max(8, int(round(float(item["w"]) * w)))
+            stages.append(
+                f"[{idx}:v]scale={width}:-2,format=rgba,"
+                f"colorchannelmixer=aa={opacity:.3f}[lg{k}]"
+            )
+            stages.append(
+                f"[{last}][lg{k}]overlay=x=W*{float(item['x']):.4f}-w/2:"
+                f"y=H*{float(item['y']):.4f}-h/2{enable}[{label}]"
+            )
+        else:
+            size = max(10, int(round(float(item["size"]) * h)))
+            col = item["color"].replace("#", "0x")
+            stages.append(
+                f"[{last}]drawtext=fontfile={_rel_for_filter(_BAR_FONT, work_dir)}:"
+                f"text='{_escape_drawtext(item['text'])}':fontcolor={col}@{opacity:.3f}:"
+                f"fontsize={size}:x=w*{float(item['x']):.4f}-text_w/2:"
+                f"y=h*{float(item['y']):.4f}-text_h/2:borderw=3:bordercolor=black@0.7"
+                f"{enable}[{label}]"
+            )
+        last = label
+    return stages, last
+
+
 def _finish_stages(in_label: str, vw: int, vh: int, opts: ClipOptions, work_dir: Path) -> list[str]:
     """Append the cinematic stages (under the captions) then the caption burn.
 
@@ -182,7 +231,8 @@ def _finish_stages(in_label: str, vw: int, vh: int, opts: ClipOptions, work_dir:
     """
     cine_stages, cap_in = effects.cinematic_stages(opts.cinematic, in_label, vw, vh)
     sig_stages, sig_in = _signature_stages(cap_in, opts.signature, vw, vh, work_dir)
-    return cine_stages + sig_stages + [_caption_stage(sig_in, opts, work_dir)]
+    ov_stages, ov_in = _overlay_stages(sig_in, opts, vw, vh, work_dir)
+    return cine_stages + sig_stages + ov_stages + [_caption_stage(ov_in, opts, work_dir)]
 
 
 def _reframe_stage(width: int, height: int, plan: Optional[ReframePlan], work_dir: Path) -> str:
@@ -289,6 +339,8 @@ def _build_square_filter_complex(opts: ClipOptions, work_dir: Path) -> str:
     # Signature/watermark, then captions, on the composited canvas.
     sig_stages, last = _signature_stages(last, opts.signature, w, h, work_dir)
     stages += sig_stages
+    ov_stages, last = _overlay_stages(last, opts, w, h, work_dir)
+    stages += ov_stages
     stages.append(_caption_stage(last, opts, work_dir))
     return ";".join(stages)
 
@@ -342,9 +394,9 @@ def generate_clip(
     """
     duration = max(0.1, end - start)
 
-    out_dir = (CLIPS_DIR / opts.clip_id).resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
     if out_path is None:
+        out_dir = (CLIPS_DIR / opts.clip_id).resolve()
+        out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / f"{opts.index}.mp4"
     else:
         out_path = Path(out_path).resolve()
@@ -359,6 +411,20 @@ def generate_clip(
     src = str(Path(source_mp4).resolve())
 
     has_music = opts.music_path is not None and Path(opts.music_path).is_file()
+
+    # Logos are extra ffmpeg inputs after the source, the square mask and the
+    # music; a logo that vanished from the library is skipped, not fatal.
+    items, logo_paths = [], []
+    for item in opts.overlays or []:
+        if item["type"] == "logo":
+            try:
+                logo_paths.append(overlays.resolve_logo(item["file"]))
+            except overlays.OverlayError as exc:
+                logger.warning("Skipping overlay: %s", exc)
+                continue
+        items.append(item)
+    first_free = (2 if opts.fit_mode == FitMode.SQUARE else 1) + (1 if has_music else 0)
+    opts = dataclasses.replace(opts, overlays=items, logo_base=first_free)
 
     # In-filtergraph paths are relative to work_dir (no Windows drive colon /
     # spaces). Inputs/outputs are absolute argv, which is fine.
@@ -385,6 +451,8 @@ def generate_clip(
         audio_map = ["-map", "[aout]"]
     else:
         audio_map = ["-map", "0:a?"]
+    for path in logo_paths:
+        inputs += ["-loop", "1", "-i", str(path.resolve())]
 
     cmd = [
         "ffmpeg", "-y",

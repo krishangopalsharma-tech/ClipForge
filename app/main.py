@@ -28,13 +28,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import (
-    captions, fonts, history, jobs, manual, mood, music, prefetch,
-    pretranscribe, profiles, speech, storage, transcriber, uploads,
+    captions, fonts, history, jobs, manual, mood, music, overlays, prefetch,
+    pretranscribe, profiles, rendering, speech, storage, transcriber, uploads,
 )
-from .models import Device, GenerateRequest, InvalidVideoURLError, TranscriptionError
+from .models import (
+    ClipChanges, Device, GenerateRequest, InvalidVideoURLError, TranscriptionError,
+)
 from .paths import (
     CLIPS_DIR, DEFAULT_CLIPS_DIR, FONTS_DIR, MUSIC_DIR, STATIC_DIR, WEB_DIST_DIR,
-    ensure_dirs, load_config, save_config,
+    WORK_DIR, ensure_dirs, load_config, save_config,
 )
 
 logging.basicConfig(
@@ -75,6 +77,8 @@ app.add_middleware(
 app.mount("/fonts", StaticFiles(directory=str(FONTS_DIR)), name="fonts")
 # Serve the music library so the UI can preview tracks with an <audio> element.
 app.mount("/music", StaticFiles(directory=str(MUSIC_DIR)), name="music")
+# Serve the logo library so the editor can show thumbnails of the logos.
+app.mount("/overlays", StaticFiles(directory=str(overlays.OVERLAYS_DIR)), name="overlays")
 # Serve the built React dashboard's hashed JS/CSS bundles (web/dist/assets) when a
 # production build exists, so the backend can serve the React app at "/" directly.
 if (WEB_DIST_DIR / "assets").is_dir():
@@ -407,8 +411,11 @@ def clip_file(clip_id: str, filename: str) -> FileResponse:
         raise HTTPException(status_code=404, detail="File not found.")
     idx = int(match.group(1))
     ext = match.group(2)
-    dir_path = history.find_entry_dir(clip_id) or (CLIPS_DIR / clip_id)
-    path = dir_path / f"{idx}.{ext}"
+    # find_entry_dir returns the clips ROOT the generation was written to; the
+    # clip's own folder is <root>/<clip_id>. (This used to look in the root
+    # itself, which never held a file, and then crashed on an undefined WORK_DIR,
+    # so no clip could be previewed or downloaded.)
+    path = history.find_entry_dir(clip_id) / clip_id / f"{idx}.{ext}"
     if not path.is_file():
         path = WORK_DIR / clip_id / f"{idx}.{ext}"
     if not path.is_file():
@@ -585,6 +592,51 @@ def delete_clip(clip_id: str, index: int) -> dict:
         raise HTTPException(status_code=400, detail="Invalid clip reference.")
     deleted = history.remove_clip(clip_id, index)
     return {"status": "ok", "deleted": deleted}
+
+
+class RestyleRequest(BaseModel):
+    """Body for POST /api/clip/restyle."""
+
+    clip_id: str
+    index: int
+    changes: ClipChanges
+
+
+@app.post("/api/clip/restyle")
+def restyle_clip(req: RestyleRequest) -> dict:
+    """Change a finished clip and render it again from its source.
+
+    Only the fields present in ``changes`` are applied (see ``ClipChanges``). The
+    source video and its transcript must still be on disk; nothing is
+    re-downloaded or re-transcribed and no AI is called. The old file is
+    replaced only when the new render succeeds. Takes as long as a normal render
+    of one clip.
+    """
+    if history.clip_path(req.clip_id, req.index) is None:
+        raise HTTPException(status_code=400, detail="Invalid clip reference.")
+    try:
+        clip = rendering.restyle_clip(req.clip_id, req.index, req.changes)
+    except rendering.RestyleError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message)
+    return {"status": "ok", "clip": clip}
+
+
+@app.get("/api/overlays")
+def get_overlays() -> dict:
+    """The logo library (files in assets/overlays + uploads)."""
+    return {"logos": overlays.list_logos()}
+
+
+@app.post("/api/overlays/upload")
+def upload_overlay(file: UploadFile = File(...)) -> dict:
+    """Add a logo (PNG with transparency is best; JPG and WebP work too)."""
+    try:
+        info = overlays.save_logo(file.filename, file.file)
+    except InvalidVideoURLError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        file.file.close()
+    return {"status": "ok", **info}
 
 
 @app.post("/api/reveal")
