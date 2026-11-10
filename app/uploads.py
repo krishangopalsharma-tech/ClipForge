@@ -23,8 +23,9 @@ import logging
 import re
 import uuid
 from pathlib import Path
-from typing import BinaryIO, Union
+from typing import BinaryIO, Optional, Union
 
+from . import cues
 from .models import InvalidVideoURLError
 from .paths import DOWNLOADS_DIR, TRANSCRIPTS_DIR
 
@@ -247,8 +248,35 @@ def parse_srt(srt_text: str) -> dict:
     }
 
 
-def save_srt_for_source(source_id: str, srt_content: Union[str, bytes]) -> dict:
-    """Parse SRT content and save it as the cached transcript for source_id."""
+def probe_fps(video: Path) -> Optional[float]:
+    """The video's frame rate, or None. Editor timecode frames are counted in it."""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=r_frame_rate", "-of", "csv=p=0", str(video)],
+            capture_output=True, text=True, timeout=30,
+        )
+        num, _, den = out.stdout.strip().partition("/")
+        fps = float(num) / float(den or 1)
+        return fps if 1.0 <= fps <= 240.0 else None
+    except Exception:  # noqa: BLE001 - a guess is made from the file instead
+        return None
+
+
+def save_srt_for_source(
+    source_id: str,
+    srt_content: Union[str, bytes],
+    filename: str = "",
+    fps: Optional[float] = None,
+) -> dict:
+    """Parse a subtitle or timestamped-text file and save it as the transcript for source_id.
+
+    Reads SubRip, WebVTT and plain text with timestamps, including an editor's
+    ``HH:MM:SS:FF`` timecode (``fps`` is the video's frame rate, for the frames).
+    The file as imported is also kept as ``<id>__srt.json``, so a later
+    verification (``app.verify``) can compare against it or put it back."""
     if isinstance(srt_content, bytes):
         try:
             srt_text = srt_content.decode("utf-8-sig")
@@ -257,15 +285,27 @@ def save_srt_for_source(source_id: str, srt_content: Union[str, bytes]) -> dict:
     else:
         srt_text = srt_content
 
-    transcript = parse_srt(srt_text)
+    kind = "srt"
+    if cues.looks_like_srt(srt_text):
+        transcript = parse_srt(srt_text)
+    else:
+        try:
+            parsed = cues.parse_cues(srt_text, filename, fps)
+        except cues.CueError as exc:
+            raise InvalidVideoURLError(str(exc)) from exc
+        transcript = cues.cues_to_transcript(parsed)
+        kind = "vtt" if cues.looks_like_vtt(srt_text) else "text"
     if not transcript["segments"]:
         raise InvalidVideoURLError(
-            "No valid subtitle segments could be parsed from the SRT file."
+            "No valid subtitle segments could be parsed from that file."
         )
 
     out_file = TRANSCRIPTS_DIR / f"{source_id}__auto.json"
     out_file.write_text(
         json.dumps(transcript, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    (TRANSCRIPTS_DIR / f"{source_id}__srt.json").write_text(
+        json.dumps(transcript, ensure_ascii=False), encoding="utf-8"
     )
 
     from . import pretranscribe
@@ -279,5 +319,6 @@ def save_srt_for_source(source_id: str, srt_content: Union[str, bytes]) -> dict:
         "segments": len(transcript["segments"]),
         "duration": transcript["duration"],
         "words": len(transcript["words"]),
+        "format": kind,
     }
 

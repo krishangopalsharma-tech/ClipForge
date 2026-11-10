@@ -136,6 +136,25 @@ ban kar chal na jaaye. API: `GET /api/export/{clip_id}` (ZIP),
 description aur tags tabhi bharte hain jab clips chat (Studio) se chune gaye hon;
 auto-selector ke clips ke ye columns khaali rehte hain.
 
+**SRT/text ka timing verify (Premiere Pro):** Studio step 1 mein `.srt`, `.vtt` ya
+`.txt` (Premiere ka timecode `00:00:20:03 - 00:00:21:12` bhi, frames video ke
+asli fps se) daalein. Ab Whisper *skip nahi hota*: tick-box "Check the caption
+timing against the audio" (default on) Whisper se video sunata hai aur har
+caption ko asli bole gaye words se milata hai. Aapke file ke **words** hi use
+hote hain (editor ki spelling), **timing** audio se naapi jaati hai. Report batata
+hai: kitne captions sahi hain, kitne `off` hain aur kitne second, constant shift
+(jaise Premiere ka `01:00:00:00` = 3600 s), aur drift per hour; jo caption galat
+hain unka corrected start dikhta hai. Jo caption pehle se sahi hain unka apna
+start/end waisa hi rehta hai; har word ko naapa hua time milta hai, to
+word-by-word caption styles bol ke saath chalti hain. "Use my file's timing" se
+original wapas, aur "Download corrected .srt" se sahi kiya hua file Premiere mein
+wapas le ja sakte hain. Language Hindi/Hinglish ho to Studio mein wahi chunein
+(Roman aur Devanagari dono scripts match hoti hain). Jo caption sunai nahi diya
+(music, doosri language, audio se kata hua text) use `unverified` mark karte hain
+aur uska timing nahi badalte. Tick hata dein to purana instant import chalta hai.
+API: `POST /api/upload-srt` (`verify_timing`, `language`), `GET /api/verify/{id}`,
+`GET /api/verify-report/{source_id}`, `.../corrected.srt`, `POST /api/verify-apply`.
+
 Studio ka purana "1:1" aspect aur "Pad" fit option (jo API ko
 kabhi valid nahi the) hata diye; square ab "Rounded square" fit hai.
 

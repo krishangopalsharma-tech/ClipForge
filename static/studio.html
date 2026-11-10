@@ -135,7 +135,7 @@
 <!-- 1 ------------------------------------------------------------------ -->
 <section class="step" id="s1">
   <h2><span class="num">1</span> Load the video & subtitles</h2>
-  <p class="hint">Upload your episode. Adding an .srt file parses subtitles in seconds and skips Whisper entirely.</p>
+  <p class="hint">Upload your episode. A subtitle or timed-text file (.srt, .vtt or .txt, including Premiere Pro exports) supplies the exact words, and its timing is then checked against the audio.</p>
   <div class="body">
     <div class="row">
       <div class="drop" id="drop">
@@ -143,16 +143,23 @@
         <span style="font-size:12px">mp4, mov, mkv, webm, avi &hellip;</span>
       </div>
       <div class="drop" id="dropSrt" style="border-style:dashed;">
-        <strong>2. Optional: Add Subtitles (.srt)</strong><br>
-        <span style="font-size:12px">Instant transcript (skips Whisper!)</span>
+        <strong>2. Optional: Add subtitles or timed text</strong><br>
+        <span style="font-size:12px">.srt, .vtt or .txt (Premiere timecode works)</span>
       </div>
     </div>
     <input type="file" id="file" accept="video/*" hidden>
-    <input type="file" id="srtFile" accept=".srt" hidden>
+    <input type="file" id="srtFile" accept=".srt,.vtt,.txt" hidden>
     <div class="bar" id="upBar" hidden><i></i></div>
     <div class="status" id="upStatus"></div>
     <div class="status warn" id="dupStatus"></div>
     <div class="status ok" id="srtStatus"></div>
+    <label style="display:flex; gap:8px; align-items:center; margin-top:8px; font-size:13px; color:var(--text); cursor:pointer">
+      <input type="checkbox" id="verifyTiming" checked style="width:auto">
+      Check the caption timing against the audio
+      <span style="color:var(--muted)">(runs Whisper: a few minutes on a long video; untick for an instant import)</span>
+    </label>
+    <div class="bar" id="vfBar" hidden><i></i></div>
+    <div id="vfReport"></div>
 
     <div class="row" style="margin-top:14px">
       <div>
@@ -431,6 +438,7 @@ function adoptSource(id, note) {
   setStep("s2", true, false);
   probeTranscript();
   checkDuplicate();
+  loadVerifyReport();
 }
 
 /* Has this video been cut before? Advisory: it warns, and asks once before a
@@ -482,23 +490,129 @@ $("srtFile").onchange = (e) => { if (e.target.files[0]) uploadSrt(e.target.files
 
 function uploadSrt(file) {
   if (!state.sourceId) {
-    say("srtStatus", "Please choose or resume a video first, then add its .srt file.", "warn");
+    say("srtStatus", "Please choose or resume a video first, then add its subtitle file.", "warn");
     return;
   }
+  const verify = $("verifyTiming").checked;
   const form = new FormData();
   form.append("source_id", state.sourceId);
   form.append("file", file);
-  say("srtStatus", "Parsing subtitles from " + file.name + "…");
+  form.append("verify_timing", verify ? "true" : "false");
+  form.append("device", $("device").value);
+  if ($("language").value) form.append("language", $("language").value);
+  $("vfReport").innerHTML = "";
+  say("srtStatus", "Reading " + file.name + "…");
   fetch("/api/upload-srt", { method: "POST", body: form })
     .then(jsonOrThrow)
     .then((res) => {
-      say("srtStatus", `✓ Subtitles loaded: ${res.segments} segments (${mmss(res.duration)}). Whisper skipped!`, "ok");
+      const kind = { srt: "SRT", vtt: "WebVTT", text: "timed text" }[res.format] || "file";
+      const fps = res.format === "text" && res.fps ? " (timecode frames at " + (Math.round(res.fps * 100) / 100) + " fps)" : "";
       setStep("s2", true, true);
       setStep("s3", true, false);
+      if (res.verify_id) {
+        say("srtStatus", "✓ " + res.segments + " captions read from the " + kind + fps +
+            ". Checking their timing against the audio…", "ok");
+        pollVerify(res.verify_id);
+      } else {
+        say("srtStatus", "✓ " + res.segments + " captions read from the " + kind + fps +
+            " (" + mmss(res.duration) + "). Timing was NOT checked.", "warn");
+      }
     })
     .catch((err) => {
       say("srtStatus", err.message, "err");
     });
+}
+
+/* Timing check: Whisper listens to the video, every caption is lined up with
+   what was said, and the report says which are off and by how much. */
+function fmtT(t) {
+  const sign = t < 0 ? "-" : "";
+  t = Math.abs(t);
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
+  return sign + (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + sec.toFixed(1).padStart(4, "0");
+}
+
+function pollVerify(id) {
+  const timer = setInterval(async () => {
+    try {
+      const snap = await jsonOrThrow(await fetch("/api/verify/" + id));
+      bar("vfBar", snap.progress || 0);
+      if (snap.status === "running") {
+        say("srtStatus", (snap.message || "Checking…") + " " + Math.round((snap.progress || 0) * 100) + "%");
+      } else {
+        clearInterval(timer);
+        $("vfBar").hidden = true;
+        if (snap.status === "error") {
+          say("srtStatus", "Could not check the timing: " + (snap.error || snap.message) +
+              " The captions from your file are still in use, with the timing it gave.", "err");
+        } else {
+          say("srtStatus", "✓ Timing checked.", "ok");
+          loadVerifyReport();
+        }
+      }
+    } catch (err) {
+      clearInterval(timer);
+      say("srtStatus", err.message, "err");
+    }
+  }, 1000);
+}
+
+async function loadVerifyReport() {
+  if (!state.sourceId) return;
+  try {
+    const res = await fetch("/api/verify-report/" + state.sourceId);
+    if (!res.ok) { $("vfReport").innerHTML = ""; return; }
+    renderVerify(await res.json());
+  } catch (_) { /* no report: nothing to show */ }
+}
+
+function renderVerify(rep) {
+  const s = rep.summary;
+  const off = (rep.cues || []).filter((c) => c.status === "off");
+  const unv = (rep.cues || []).filter((c) => c.status === "unverified");
+  const good = !s.off && !s.shift_applied_s;
+  const rows = off.slice(0, 40).map((c) => `<tr>
+      <td class="mono">${fmtT(c.start)}</td><td>${escapeHtml(c.text)}</td>
+      <td class="mono">${c.start_off > 0 ? "+" : ""}${c.start_off} s</td>
+      <td class="mono">${fmtT(c.start)} &rarr; ${fmtT(c.new_start)}</td></tr>`).join("");
+  const stat = (label, value) => `<span style="margin-right:16px"><span style="color:var(--muted)">${label}</span> <b>${value}</b></span>`;
+  const using = rep.applied === "original" ? "your file's timing" : "the corrected timing";
+  $("vfReport").innerHTML = `
+    <div class="note" style="border-left-color:${good ? "var(--ok)" : "var(--warn)"}">
+      <strong>${escapeHtml(s.verdict || "")}</strong>
+      <div style="margin-top:8px">
+        ${stat("On the speech", s.ok + " / " + s.cues + " (" + s.ok_percent + "%)")}
+        ${stat("Off", s.off)}
+        ${stat("Could not check", s.unverified)}
+        ${s.median_abs_dev_s != null ? stat("Typical error", s.median_abs_dev_s + " s") : ""}
+        ${s.max_abs_dev_s != null ? stat("Worst", s.max_abs_dev_s + " s") : ""}
+        ${s.drift_s_per_hour != null ? stat("Drift", (s.drift_s_per_hour > 0 ? "+" : "") + s.drift_s_per_hour + " s/hour") : ""}
+      </div>
+      <div style="margin-top:8px">Captions now use <b>${using}</b>. The words are always yours; the corrected timing also gives each word its measured time, so word-by-word caption styles follow the speech.</div>
+    </div>
+    ${rows ? `<table><thead><tr><th>Caption at</th><th>Text</th><th>Off by</th><th>Corrected start</th></tr></thead><tbody>${rows}</tbody></table>
+      ${off.length > 40 ? `<div class="status">…and ${off.length - 40} more.</div>` : ""}` : ""}
+    ${unv.length ? `<div class="status" style="margin-top:8px">${unv.length} caption(s) could not be checked because their words were not heard clearly (music, a different language, or text that was cut from the audio). Their timing is left as your file has it${s.shift_applied_s ? ", moved by the same constant shift" : ""}.</div>` : ""}
+    <div class="stack">
+      <button data-vf="corrected" ${rep.applied !== "original" ? "disabled" : ""}>Use corrected timing</button>
+      <button class="ghost" data-vf="original" ${rep.applied === "original" ? "disabled" : ""}>Use my file's timing</button>
+      <a class="btn ghost" href="/api/verify-report/${state.sourceId}/corrected.srt">Download corrected .srt</a>
+    </div>
+    <div class="status" id="vfApplyStatus"></div>`;
+  $("vfReport").querySelectorAll("[data-vf]").forEach((btn) => {
+    btn.onclick = async () => {
+      try {
+        await jsonOrThrow(await fetch("/api/verify-apply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ source_id: state.sourceId, use: btn.dataset.vf }),
+        }));
+        loadVerifyReport();
+      } catch (err) {
+        say("vfApplyStatus", err.message, "err");
+      }
+    };
+  });
 }
 
 function upload(file) {

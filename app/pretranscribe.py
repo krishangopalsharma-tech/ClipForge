@@ -102,8 +102,13 @@ def get_or_transcribe(
     device: str,
     progress: Optional[Callable[[float, str], None]] = None,
     language: Optional[str] = None,
+    variant: str = "",
 ) -> dict:
     """Return a cached transcript for this source+language, or transcribe + cache it.
+
+    ``variant`` keeps a separate copy under its own name (e.g. ``"heard"``: what
+    Whisper heard, kept beside an imported subtitle file that owns the normal
+    slot), so the two never overwrite each other.
 
     Concurrency-safe: if another thread is already transcribing this source, this
     call blocks on the lock and then returns the freshly-cached result instead of
@@ -111,14 +116,19 @@ def get_or_transcribe(
     restarts / in-memory cache misses). The chosen ``language`` is part of the
     cache identity, so the same video can hold a separate transcript per language.
     """
-    key = _key(source_id, language)
-    hit = cached(source_id, language)
+    key = _key(source_id, language) + (f".{variant}" if variant else "")
+
+    def lookup() -> Optional[dict]:
+        with _CACHE_LOCK:
+            return _CACHE.get(key)
+
+    hit = lookup()
     if hit is not None:
         return hit
 
     with _TRANSCRIBE_LOCK:
         # Re-check now that we hold the lock — a concurrent run may have finished.
-        hit = cached(source_id, language)
+        hit = lookup()
         if hit is not None:
             return hit
 

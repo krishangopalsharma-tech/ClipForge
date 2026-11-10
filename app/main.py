@@ -33,6 +33,7 @@ from starlette.background import BackgroundTask
 from . import (
     captions, export, fonts, history, jobs, manual, mood, music, overlays, prefetch,
     pretranscribe, profiles, rendering, sources, speech, storage, transcriber, uploads,
+    verify,
 )
 from .models import (
     ClipChanges, Device, GenerateRequest, InvalidVideoURLError, TranscriptionError,
@@ -151,16 +152,115 @@ def upload(file: UploadFile = File(...)) -> dict:
 
 
 @app.post("/api/upload-srt")
-def upload_srt(source_id: str = Form(...), file: UploadFile = File(...)) -> dict:
-    """Accept an SRT subtitle file for an already uploaded or referenced source video."""
+def upload_srt(
+    source_id: str = Form(...),
+    file: UploadFile = File(...),
+    verify_timing: bool = Form(False),
+    device: str = Form("auto"),
+    language: Optional[str] = Form(None),
+) -> dict:
+    """Accept a subtitle or timestamped-text file for an uploaded video.
+
+    Reads SubRip (``.srt``), WebVTT (``.vtt``) and plain text with timestamps,
+    including Premiere/Resolve timecode (``00:00:20:03``). The file's text is used
+    straight away. With ``verify_timing`` Whisper also listens to the video and
+    every caption is checked against what is said (see ``GET /api/verify/{id}``
+    and ``/api/verify-report/{source_id}``); without it Whisper is skipped, as
+    before. ``language`` names the spoken language for that check.
+    """
     try:
+        fps = None
+        try:
+            fps = uploads.probe_fps(uploads.resolve_upload(source_id))
+        except InvalidVideoURLError:
+            pass
         content = file.file.read()
-        res = uploads.save_srt_for_source(source_id, content)
+        res = uploads.save_srt_for_source(source_id, content, file.filename or "", fps)
     except InvalidVideoURLError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     finally:
         file.file.close()
-    return {"status": "ok", **res}
+    out = {"status": "ok", **res, "fps": fps}
+    if verify_timing:
+        job = verify.start(source_id, device, (language or "").strip() or None)
+        out["verify_id"] = job.id
+    return out
+
+
+def _source_id_or_400(source_id: str) -> str:
+    if not re.fullmatch(r"[0-9a-f]{32}", source_id or ""):
+        raise HTTPException(status_code=400, detail="Invalid source id.")
+    return source_id
+
+
+class VerifyRequest(BaseModel):
+    """Body for POST /api/verify-start."""
+
+    source_id: str
+    device: Device = Device.AUTO
+    language: Optional[str] = None
+
+
+@app.post("/api/verify-start")
+def verify_start(req: VerifyRequest) -> dict:
+    """Check the imported subtitle file's timing against the audio (again).
+
+    Runs Whisper on the video (reused if already done for this language) and
+    compares. Poll ``GET /api/verify/{verify_id}``; read the result from
+    ``GET /api/verify-report/{source_id}``.
+    """
+    _source_id_or_400(req.source_id)
+    if not verify.path(req.source_id, "srt").is_file():
+        raise HTTPException(status_code=409, detail="Upload the subtitle file first.")
+    job = verify.start(req.source_id, req.device.value, (req.language or "").strip() or None)
+    return {"verify_id": job.id, **job.snapshot()}
+
+
+@app.get("/api/verify/{job_id}")
+def verify_status(job_id: str) -> dict:
+    """Progress of a timing check."""
+    job = verify.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown verification id.")
+    return job.snapshot()
+
+
+@app.get("/api/verify-report/{source_id}")
+def verify_report(source_id: str) -> dict:
+    """The saved report: a summary and, for every caption, where it is vs. the audio."""
+    report = verify.load_report(_source_id_or_400(source_id))
+    if report is None:
+        raise HTTPException(status_code=404, detail="This video has no timing report yet.")
+    return report
+
+
+@app.get("/api/verify-report/{source_id}/corrected.srt")
+def verify_corrected_srt(source_id: str) -> Response:
+    """The corrected captions as an .srt, to take back into Premiere or anywhere else."""
+    corrected = verify._read(verify.path(_source_id_or_400(source_id), "verified"))
+    if corrected is None:
+        raise HTTPException(status_code=404, detail="This video has no corrected captions yet.")
+    return Response(
+        content=("﻿" + verify.to_srt(corrected["segments"])).encode("utf-8"),
+        media_type="application/x-subrip; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="corrected-{source_id[:8]}.srt"'},
+    )
+
+
+class VerifyApplyRequest(BaseModel):
+    """Body for POST /api/verify-apply."""
+
+    source_id: str
+    use: str = Field(description="'corrected' (measured word times) or 'original' (the file as imported).")
+
+
+@app.post("/api/verify-apply")
+def verify_apply(req: VerifyApplyRequest) -> dict:
+    """Choose which version of the captions the app uses for this video."""
+    try:
+        return {"status": "ok", **verify.activate(_source_id_or_400(req.source_id), req.use)}
+    except verify.VerifyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 
