@@ -40,8 +40,9 @@ from .models import (
     TranscriptionError,
 )
 from .paths import (
-    CLIPS_DIR, DEFAULT_CLIPS_DIR, FONTS_DIR, MUSIC_DIR, STATIC_DIR, WEB_DIST_DIR,
-    WORK_DIR, ensure_dirs, load_config, save_config,
+    CLIPS_DIR, DEFAULT_CLIPS_DIR, DOWNLOADS_DIR, FONTS_DIR, MUSIC_DIR,
+    STATIC_DIR, TRANSCRIPTS_DIR, WEB_DIST_DIR, WORK_DIR, ensure_dirs,
+    load_config, save_config,
 )
 
 logging.basicConfig(
@@ -586,6 +587,53 @@ def movie_voices() -> dict:
         "error": state.get("error"),
         "url": kokoro_tts.KOKORO_URL,
     }
+
+
+_HEX32 = re.compile(r"^[0-9a-f]{32}$")
+
+
+@app.get("/api/movie/videos")
+def movie_videos() -> dict:
+    """Videos already in the library, newest first.
+
+    Step 1 asks for a source id, which is a 32-character hex string nobody can
+    be expected to remember. This is where the picker gets its list, so the id
+    stays an implementation detail rather than something to copy by hand.
+    """
+    labels: dict = {}
+    try:
+        for entry in history.list_entries():
+            sid = entry.get("source_id")
+            if sid and sid not in labels and entry.get("source"):
+                labels[sid] = entry["source"]
+    except Exception:  # noqa: BLE001 - a broken history must not hide the videos
+        logger.exception("Could not read history for video labels")
+
+    videos = []
+    for video in DOWNLOADS_DIR.glob("*"):
+        if not video.is_file() or video.suffix == ".part":
+            continue
+        sid = video.stem
+        if not _HEX32.match(sid):
+            continue
+        stat = video.stat()
+        name_file = DOWNLOADS_DIR / f"{sid}.name.txt"
+        label = ""
+        if name_file.exists():
+            try:
+                label = name_file.read_text(encoding="utf-8").strip()
+            except OSError:
+                label = ""
+        videos.append({
+            "source_id": sid,
+            "label": label or labels.get(sid) or "",
+            "ext": video.suffix,
+            "bytes": stat.st_size,
+            "modified": stat.st_mtime,
+            "has_transcript": any(TRANSCRIPTS_DIR.glob(f"{sid}__*.json")),
+        })
+    videos.sort(key=lambda v: v["modified"], reverse=True)
+    return {"videos": videos}
 
 
 @app.post("/api/movie/plan")

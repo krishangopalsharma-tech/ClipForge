@@ -72,10 +72,19 @@
     <label>Upload a video file (.mp4, .mkv, .mov …)</label>
     <input type="file" id="file" accept="video/*">
     <div class="row" style="margin-top:10px">
-      <div><label>…or paste a source id you already have</label>
-        <input id="sid" placeholder="32-character id"></div>
-      <div class="auto"><button class="ghost" id="useId">Use it</button></div>
+      <div><label>…or pick a video you have already uploaded</label>
+        <select id="pick"><option value="">Loading…</option></select></div>
+      <div class="auto"><button class="ghost" id="usePick">Use it</button></div>
     </div>
+    <p class="meta" id="pickNote">Newest first. A video marked “transcribed” can skip
+      straight past step 2.</p>
+    <details style="margin-top:8px">
+      <summary class="meta" style="cursor:pointer">…or paste a source id</summary>
+      <div class="row" style="margin-top:8px">
+        <div><input id="sid" placeholder="32-character id"></div>
+        <div class="auto"><button class="ghost" id="useId">Use it</button></div>
+      </div>
+    </details>
     <div class="msg" id="m1"></div>
   </div>
 
@@ -209,6 +218,8 @@ function say(el, text, kind = "info") {
   box.className = "msg show " + kind;
 }
 function open(step) { $(step).classList.remove("off"); }
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 async function api(url, opts) {
   const r = await fetch(url, opts);
   let data = {};
@@ -228,9 +239,43 @@ $("file").onchange = async e => {
     const d = await api("/api/upload", { method: "POST", body });
     sourceId = d.upload_id;
     $("sid").value = sourceId;
-    say("m1", `Ready. Source id ${sourceId}`, "ok");
+    loadVideos(sourceId);
+    say("m1", `Ready — ${f.name} is in your videos now.`, "ok");
     open("s2");
   } catch (err) { say("m1", err.message, "err"); }
+};
+async function loadVideos(select) {
+  try {
+    const d = await api("/api/movie/videos");
+    const list = d.videos || [];
+    if (!list.length) {
+      $("pick").innerHTML = '<option value="">No videos uploaded yet</option>';
+      return;
+    }
+    $("pick").innerHTML = list.map(v => {
+      const when = new Date(v.modified * 1000).toLocaleString();
+      const gb = (v.bytes / 1073741824);
+      const size = gb >= 1 ? gb.toFixed(1) + " GB"
+                           : Math.round(v.bytes / 1048576) + " MB";
+      const name = v.label || ("Video " + v.source_id.slice(0, 8));
+      const tr = v.has_transcript ? " · transcribed" : "";
+      return `<option value="${v.source_id}">${esc(name)} — ${when} · ${size}${tr}</option>`;
+    }).join("");
+    if (select) $("pick").value = select;
+  } catch (err) {
+    $("pick").innerHTML = '<option value="">Could not read your videos</option>';
+  }
+}
+loadVideos();
+
+$("usePick").onclick = () => {
+  const v = $("pick").value;
+  if (!v) return say("m1", "No video to pick.", "err");
+  sourceId = v;
+  $("sid").value = v;
+  const name = $("pick").selectedOptions[0].textContent.split(" — ")[0];
+  say("m1", `Using ${name}`, "ok");
+  open("s2");
 };
 $("useId").onclick = () => {
   const v = $("sid").value.trim();
@@ -361,8 +406,6 @@ function renderPreview(d) {
                    <span><i style="background:var(--ok)"></i>original dialogue</span>`;
   host.appendChild(key);
 }
-const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
-  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // 5 — render ---------------------------------------------------------------
 async function loadVoices(preferred) {

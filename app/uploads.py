@@ -111,9 +111,17 @@ def save_upload(filename: str, fileobj: BinaryIO) -> dict:
             ) from exc
         logger.info("Saved upload %s -> %s (%d bytes)", filename, dest.name, size)
 
+    # Remember what the file was called. The id is a hash, so without this the
+    # only way to tell two uploads apart later is by size and date.
+    label = Path(filename or "video").name
+    try:
+        (DOWNLOADS_DIR / f"{upload_id}.name.txt").write_text(label, encoding="utf-8")
+    except OSError:
+        logger.warning("Could not record the name of upload %s", upload_id)
+
     return {
         "upload_id": upload_id,
-        "filename": Path(filename or "video").name,
+        "filename": label,
         "ext": ext,
         "reused": reused,
     }

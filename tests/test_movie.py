@@ -383,6 +383,50 @@ class RouteTests(unittest.TestCase):
     def test_prompt_endpoint_rejects_an_unknown_mode(self):
         self.assertEqual(self.client.get("/api/movie/prompt?mode=nope").status_code, 400)
 
+    def test_videos_endpoint_lists_the_library_newest_first(self):
+        """Step 1's picker exists so nobody has to know a source id by heart."""
+        import tempfile
+        from app import main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            downloads = Path(tmp) / "downloads"
+            transcripts = Path(tmp) / "transcripts"
+            downloads.mkdir()
+            transcripts.mkdir()
+            old, new_ = "a" * 32, "b" * 32
+            (downloads / f"{old}.mp4").write_bytes(b"x" * 10)
+            (downloads / f"{new_}.mkv").write_bytes(b"y" * 20)
+            (downloads / f"{new_}.name.txt").write_text("Heat 1995.mkv", encoding="utf-8")
+            (transcripts / f"{old}__auto.json").write_text("{}", encoding="utf-8")
+            os.utime(downloads / f"{old}.mp4", (1000, 1000))
+            os.utime(downloads / f"{new_}.mkv", (2000, 2000))
+
+            with mock.patch.object(main, "DOWNLOADS_DIR", downloads),                  mock.patch.object(main, "TRANSCRIPTS_DIR", transcripts),                  mock.patch.object(main.history, "list_entries", return_value=[]):
+                body = self.client.get("/api/movie/videos").json()
+
+        ids = [v["source_id"] for v in body["videos"]]
+        self.assertEqual(ids, [new_, old])
+        self.assertEqual(body["videos"][0]["label"], "Heat 1995.mkv")
+        self.assertFalse(body["videos"][0]["has_transcript"])
+        self.assertTrue(body["videos"][1]["has_transcript"])
+
+    def test_videos_endpoint_falls_back_to_the_history_label(self):
+        import tempfile
+        from app import main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            downloads = Path(tmp) / "downloads"
+            transcripts = Path(tmp) / "transcripts"
+            downloads.mkdir()
+            transcripts.mkdir()
+            sid = "c" * 32
+            (downloads / f"{sid}.mp4").write_bytes(b"x")
+            entries = [{"source_id": sid, "source": "Sherlock S01E03"}]
+            with mock.patch.object(main, "DOWNLOADS_DIR", downloads),                  mock.patch.object(main, "TRANSCRIPTS_DIR", transcripts),                  mock.patch.object(main.history, "list_entries", return_value=entries):
+                body = self.client.get("/api/movie/videos").json()
+
+        self.assertEqual(body["videos"][0]["label"], "Sherlock S01E03")
+
     def test_voices_endpoint_answers_even_when_kokoro_is_down(self):
         from app import kokoro_tts
         with mock.patch.object(kokoro_tts, "status",
