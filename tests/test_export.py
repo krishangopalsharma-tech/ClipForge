@@ -117,6 +117,16 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(len([n for n in z.namelist() if n.endswith(".mp4")]), 1)
 
+    def test_hashtags_in_the_description_fill_an_empty_tags_column(self):
+        self.write_history([
+            self.clip(0, description="Fast bike. #SpeedRecord #BurtMunro #speedrecord #shorts"),
+            self.clip(1, description="No tags here."),
+        ])
+        _z, rows = self.export()
+        by_index = {r["index"]: r for r in rows}
+        self.assertEqual(by_index["0"]["tags"], "SpeedRecord, BurtMunro, shorts")
+        self.assertEqual(by_index["1"]["tags"], "")
+
     def test_duplicate_and_unsafe_names_are_made_safe(self):
         self.write_history([
             self.clip(0, filename="same.mp4"), self.clip(1, filename="same.mp4"),

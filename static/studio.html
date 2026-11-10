@@ -116,6 +116,9 @@
   .gen{display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; font-size:13px;
        background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:8px 12px}
   .gen .when{color:var(--muted); font-family:ui-monospace,Consolas,monospace; font-size:12px}
+  .batch{margin-top:14px; padding:14px; border:1px solid var(--accent); border-radius:12px}
+  .batch-head{display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center}
+  .batch-head .src{flex:1 1 200px; color:var(--muted); font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   .gen .src{flex:1 1 200px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   a.btn{display:inline-block; background:var(--accent); color:#0b0d12; border-radius:8px;
         padding:7px 13px; font-size:13px; font-weight:600; text-decoration:none}
@@ -364,6 +367,7 @@
     </div>
     <div class="status" id="edStatus"></div>
     <div class="gens" id="edGens"></div>
+    <div id="edBatch"></div>
     <div class="clips edit-list" id="edList"></div>
     <div class="note">Needs the source video and its transcript to still be on disk (Storage page). Clips made before this feature existed cannot be edited; generate them again.</div>
   </div>
@@ -1085,7 +1089,7 @@ function readOverlays(panel) {
   });
 }
 
-function editorHtml(r) {
+function editorHtml(r, batch) {
   const cin = r.cinematic || {};
   const cap = r.caption_overrides || {};
   const sig = r.signature || {};
@@ -1127,12 +1131,12 @@ function editorHtml(r) {
       <button class="ghost" data-act="upload-logo">Upload a logo&hellip;</button>
       <input type="file" data-f="logoFile" accept="image/png,image/jpeg,image/webp" hidden>
     </div>
-    <h4>Cut (seconds into the source video)</h4>
+    ${batch ? "" : `<h4>Cut (seconds into the source video)</h4>
     <div class="row">
       <div><label>Start</label><input type="number" data-f="start" step="0.1" min="0" value="${r.start}"></div>
       <div><label>End</label><input type="number" data-f="end" step="0.1" min="0" value="${r.end}"></div>
-    </div>
-    <div class="stack"><button data-act="apply">Apply and re-render</button></div>
+    </div>`}
+    <div class="stack"><button data-act="apply">${batch ? "Apply to all " + batch + " clips" : "Apply and re-render"}</button></div>
     <div class="status" data-f="status"></div>
   </div>`;
 }
@@ -1168,10 +1172,118 @@ function collectChanges(panel, r) {
     ? Object.assign({}, r.signature || {}, { enabled: true, text: handle })
     : (r.signature ? Object.assign({}, r.signature, { enabled: false }) : null);
 
-  const start = parseFloat(f("start").value), end = parseFloat(f("end").value);
-  if (!isNaN(start) && Math.abs(start - r.start) > 0.001) changes.start = start;
-  if (!isNaN(end) && Math.abs(end - r.end) > 0.001) changes.end = end;
+  // A batch edit has no cut: every clip keeps its own start and end.
+  if (f("start") && f("end")) {
+    const start = parseFloat(f("start").value), end = parseFloat(f("end").value);
+    if (!isNaN(start) && Math.abs(start - r.start) > 0.001) changes.start = start;
+    if (!isNaN(end) && Math.abs(end - r.end) > 0.001) changes.end = end;
+  }
   return changes;
+}
+
+/* Logo / text rows and logo upload, shared by the one-clip and the batch editor.
+   Returns true when the click was one of these. */
+function overlayAct(panel, act, ev) {
+  const list = panel.querySelector('[data-f="overlays"]');
+  const addRow = (o) => list.insertAdjacentHTML("beforeend", overlayRowHtml(o));
+  if (act === "rm") ev.target.closest(".ovrow").remove();
+  else if (act === "add-logo") addRow({ type: "logo", file: (edit.logos[0] || {}).file, x: 0.85, y: 0.10, w: 0.18 });
+  else if (act === "add-text") addRow({ type: "text", text: "Follow for more", x: 0.5, y: 0.90, size: 0.045, color: "#FFFFFF" });
+  else if (act === "upload-logo") panel.querySelector('[data-f="logoFile"]').click();
+  else return false;
+  return true;
+}
+
+function wireLogoUpload(panel, status) {
+  const list = panel.querySelector('[data-f="overlays"]');
+  panel.querySelector('[data-f="logoFile"]').onchange = async (ev) => {
+    const file = ev.target.files[0];
+    if (!file) return;
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      await jsonOrThrow(await fetch("/api/overlays/upload", { method: "POST", body: form }));
+      await loadEditorChoices();
+      list.innerHTML = readOverlays(panel).map(overlayRowHtml).join("");
+      status("Logo uploaded. Pick it from the Logo list.", "ok");
+    } catch (err) {
+      status(err.message, "err");
+    }
+    ev.target.value = "";
+  };
+}
+
+/* ---------- edit a whole batch at once ---------------------------------- */
+/* One editor for every clip of a generation (a Movie Shorts batch, say): the
+   chosen framing, captions, music, look and logos go onto each clip, which is
+   then re-rendered in place, one after another. Each clip keeps its own cut
+   and its own caption settings other than the ones changed here. */
+let pendingEditAll = null;
+
+function openBatchEditor(clipId) {
+  const host = $("edBatch");
+  const entry = (edit.entries || []).find((e) => e.clip_id === clipId);
+  const clips = entry ? (entry.clips || []).filter((c) => c.recipe && c.exists !== false) : [];
+  if (!clips.length) {
+    host.innerHTML = "";
+    say("edStatus", "That batch has no editable clips left.", "err");
+    return;
+  }
+  const url = (c) => c.url || `/clips/${clipId}/${c.index}.mp4`;
+  host.innerHTML = `<div class="batch">
+    <div class="batch-head"><b>Edit all ${clips.length} clips</b>
+      <span class="src">${escapeHtml(shortSource(entry.source))}</span>
+      <a class="btn" href="/api/export/${clipId}">&#11015; Download all + CSV (ZIP)</a>
+      <button class="ghost" data-act="close-batch">Close</button></div>
+    <p class="hint">Starts from the first clip's settings. Each clip keeps its own cut. Rendering runs one clip after another; keep this page open until it says done.</p>
+    <div class="clips batch-clips">${clips.map((c) => `<div class="clip" data-index="${c.index}">
+      <video src="${url(c)}" controls preload="metadata"></video>
+      <div class="meta"><div class="t">${escapeHtml(c.title || "Clip " + (c.index + 1))}</div>
+      <div class="mono" data-f="state"></div></div></div>`).join("")}</div>
+    ${editorHtml(clips[0].recipe, clips.length)}
+  </div>`;
+  const panel = host.querySelector(".editor");
+  const status = (msg, kind) => {
+    const el = panel.querySelector('[data-f="status"]');
+    el.textContent = msg || "";
+    el.className = "status" + (kind ? " " + kind : "");
+  };
+  wireLogoUpload(panel, status);
+  host.querySelector('[data-act="close-batch"]').onclick = () => { host.innerHTML = ""; };
+
+  panel.addEventListener("click", async (ev) => {
+    const act = ev.target.dataset && ev.target.dataset.act;
+    if (!act || overlayAct(panel, act, ev) || act !== "apply") return;
+    const btn = ev.target;
+    btn.disabled = true;
+    let ok = 0;
+    const failed = [];
+    for (let i = 0; i < clips.length; i++) {
+      const c = clips[i];
+      const card = host.querySelector(`.batch-clips [data-index="${c.index}"]`);
+      const state = card.querySelector('[data-f="state"]');
+      state.textContent = "rendering…";
+      status(`Rendering ${i + 1} of ${clips.length}: ${c.title || "clip " + (c.index + 1)}…`);
+      try {
+        const res = await jsonOrThrow(await fetch("/api/clip/restyle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ clip_id: clipId, index: c.index, changes: collectChanges(panel, c.recipe) }),
+        }));
+        clips[i] = Object.assign(c, res.clip);
+        card.querySelector("video").src = url(res.clip) + "?v=" + Date.now();
+        state.textContent = "✓ done";
+        ok++;
+      } catch (err) {
+        state.textContent = "✗ " + err.message;
+        failed.push((c.title || "clip " + (c.index + 1)) + ": " + err.message);
+      }
+    }
+    btn.disabled = false;
+    status(`${ok} of ${clips.length} clips re-rendered.` + (failed.length ? " Failed: " + failed.join("; ") : " Download them all with the button above."),
+           failed.length ? "err" : "ok");
+  });
+  host.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function wireEditor(card, key) {
@@ -1182,21 +1294,10 @@ function wireEditor(card, key) {
     el.textContent = msg || "";
     el.className = "status" + (kind ? " " + kind : "");
   };
-  const list = panel.querySelector('[data-f="overlays"]');
-  const addRow = (o) => list.insertAdjacentHTML("beforeend", overlayRowHtml(o));
-
   panel.addEventListener("click", async (ev) => {
     const act = ev.target.dataset && ev.target.dataset.act;
-    if (!act) return;
-    if (act === "rm") {
-      ev.target.closest(".ovrow").remove();
-    } else if (act === "add-logo") {
-      addRow({ type: "logo", file: (edit.logos[0] || {}).file, x: 0.85, y: 0.10, w: 0.18 });
-    } else if (act === "add-text") {
-      addRow({ type: "text", text: "Follow for more", x: 0.5, y: 0.90, size: 0.045, color: "#FFFFFF" });
-    } else if (act === "upload-logo") {
-      panel.querySelector('[data-f="logoFile"]').click();
-    } else if (act === "apply") {
+    if (!act || overlayAct(panel, act, ev)) return;
+    if (act === "apply") {
       const btn = ev.target;
       btn.disabled = true;
       status("Rendering… about as long as the first render of this clip.");
@@ -1224,21 +1325,7 @@ function wireEditor(card, key) {
     }
   });
 
-  panel.querySelector('[data-f="logoFile"]').onchange = async (ev) => {
-    const file = ev.target.files[0];
-    if (!file) return;
-    const form = new FormData();
-    form.append("file", file);
-    try {
-      await jsonOrThrow(await fetch("/api/overlays/upload", { method: "POST", body: form }));
-      await loadEditorChoices();
-      list.innerHTML = readOverlays(panel).map(overlayRowHtml).join("");
-      status("Logo uploaded. Pick it from the Logo list.", "ok");
-    } catch (err) {
-      status(err.message, "err");
-    }
-    ev.target.value = "";
-  };
+  wireLogoUpload(panel, status);
 }
 
 function shortSource(label) {
@@ -1253,12 +1340,16 @@ function renderGenerations(entries) {
     return `<div class="gen"><span class="when">${escapeHtml((e.created || "").replace("T", " ").slice(0, 16))}</span>
       <span class="src" title="${escapeHtml(e.source || "")}">${escapeHtml(shortSource(e.source))}</span>
       <span class="mono">${n} clip${n === 1 ? "" : "s"}</span>
+      <button class="ghost" data-edit-all="${e.clip_id}">Edit all</button>
       <a class="btn" href="/api/export/${e.clip_id}">&#11015; ZIP + CSV</a>
       <a class="btn ghost" href="/api/export/${e.clip_id}/clips.csv">CSV</a></div>`;
   });
   $("edGens").innerHTML = rows.length
     ? rows.join("") + '<div><a class="btn ghost" href="/api/export.csv">CSV of every clip in your history</a></div>'
     : "";
+  $("edGens").querySelectorAll("[data-edit-all]").forEach((b) => {
+    b.onclick = () => openBatchEditor(b.dataset.editAll);
+  });
 }
 
 async function loadEditList() {
@@ -1266,6 +1357,7 @@ async function loadEditList() {
   try {
     await loadEditorChoices();
     const entries = await jsonOrThrow(await fetch("/api/history"));
+    edit.entries = entries;
     renderGenerations(entries);
     edit.clips = {};
     const cards = [];
@@ -1297,11 +1389,28 @@ async function loadEditList() {
         wireEditor(card, key);
       };
     });
+    if (pendingEditAll) { const id = pendingEditAll; pendingEditAll = null; openBatchEditor(id); }
   } catch (err) {
     say("edStatus", err.message, "err");
   }
 }
 $("edRefresh").onclick = loadEditList;
+
+// "Edit all" from Movie Shorts: the main app's panel forwards it here, or a
+// plain visit arrives as /studio#edit-all=<clip_id>.
+function requestEditAll(clipId) {
+  if (!/^[0-9a-f]{32}$/.test(clipId || "")) return;
+  pendingEditAll = clipId;
+  loadEditList();
+}
+window.addEventListener("message", (e) => {
+  if (e.origin !== location.origin || !e.data || e.data.type !== "cf-edit-all") return;
+  requestEditAll(e.data.clip_id);
+});
+{
+  const m = /edit-all=([0-9a-f]{32})/.exec(location.hash);
+  if (m) pendingEditAll = m[1];
+}
 loadEditList();
 
 /* ---------- restore ----------------------------------------------------- */

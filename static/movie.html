@@ -64,6 +64,9 @@
   .sent{display:inline-block;margin-left:8px;font-size:12px;color:var(--ok)}
   .batch{margin-top:14px}
   .batch > .meta{margin-bottom:8px}
+  a.btnlink{display:inline-flex;align-items:center;padding:9px 14px;border-radius:9px;
+    background:var(--panel-2);border:1px solid var(--line);color:var(--text);text-decoration:none;font-size:14px}
+  a.btnlink:hover{border-color:var(--accent)}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
 </style>
 </head>
@@ -341,11 +344,19 @@ $("whisper").onclick = async () => {
     }, 1500);
   } catch (err) { say("m2", err.message, "err"); }
 };
+// How many transcript lines a video has (0 when none). The endpoint returns
+// the paste-ready text, one "[id] start-end text" line per segment, not JSON.
+async function transcriptLines(id) {
+  const r = await fetch(`/api/transcript/${id}`);
+  if (!r.ok) return 0;
+  const text = await r.text();
+  return (text.match(/^\[\d+\]/gm) || []).length;
+}
+
 $("checkTr").onclick = async () => {
   if (!sourceId) return;
   try {
-    const d = await api(`/api/transcript/${sourceId}`);
-    const n = (d.segments || []).length;
+    const n = await transcriptLines(sourceId);
     if (!n) return say("m2", "No transcript yet.", "warn");
     say("m2", `Transcript present — ${n} lines.`, "ok");
     open("s3");
@@ -426,6 +437,7 @@ function renderPreview(d) {
 
 // 5 — render ---------------------------------------------------------------
 async function loadVoices(preferred) {
+  if (draftVoice) { preferred = draftVoice; draftVoice = null; }
   try {
     const d = await api("/api/movie/voices");
     const sel = $("voice");
@@ -549,9 +561,37 @@ function showResults(s) {
       editor, with the whole short already selected. There you can change the
       framing, caption style, logo and music and see it before it renders.
       They also stay listed under "Your shorts".</div>`;
+    if (s.clip_id) go.appendChild(batchActions(s.clip_id, s.clips.length));
     host.prepend(go);
   }
   if (s.status === "done") loadRecent();
+}
+
+// Two ways to finish a whole batch: style every short at once in Studio's
+// batch editor (logo, music, captions, look), or download them all with the
+// SEO sheet. A batch is one history generation, named by its clip_id.
+function editAll(clipId) {
+  if (EMBEDDED) {
+    window.parent.postMessage({ type: "cf-open", tool: "studio", edit_all: clipId }, window.location.origin);
+  } else {
+    window.location.href = "/studio#edit-all=" + clipId;
+  }
+}
+function batchActions(clipId, n) {
+  const row = document.createElement("div");
+  row.className = "row";
+  row.style.cssText = "margin:8px 0 10px;gap:8px;flex-wrap:wrap";
+  const edit = document.createElement("button");
+  edit.textContent = `Edit all ${n} together →`;
+  edit.title = "Logo, music, caption style and place, look — applied to every short";
+  edit.onclick = () => editAll(clipId);
+  const dl = document.createElement("a");
+  dl.className = "btnlink";
+  dl.href = `/api/export/${clipId}`;
+  dl.textContent = "⬇ Download all + CSV (ZIP)";
+  row.appendChild(edit);
+  row.appendChild(dl);
+  return row;
 }
 
 // "Your shorts": the latest batches from history, so a page reload, a server
@@ -573,6 +613,7 @@ async function loadRecent() {
       const when = b.created ? new Date(b.created).toLocaleString() : "";
       box.innerHTML = `<div class="meta" style="color:var(--muted);font-size:13px">
         <b style="color:var(--text)">${esc(b.source || "Movie Shorts")}</b> · ${esc(when)}</div>`;
+      box.appendChild(batchActions(b.clip_id, b.clips.length));
       const grid = document.createElement("div");
       grid.className = "grid";
       b.clips.forEach(c => grid.appendChild(clipCard(c)));
@@ -618,7 +659,58 @@ function styleInApp(c) {
   window.location.href = "/";
 }
 
+// The page remembers where you were — the film, the prompt settings, the
+// model's JSON and the build options — so leaving it (for the editor, a
+// reload, a restart) never means picking the film and pasting the JSON again.
+const DRAFT_KEY = "cf-movie-draft";
+const DRAFT_FIELDS = ["title", "season", "episode", "mode", "num", "len", "json",
+                      "fit", "aspect", "capStyle", "capScale", "capPos", "voice"];
+let draftVoice = null;
+function saveDraft() {
+  const d = { sourceId };
+  DRAFT_FIELDS.forEach(k => { if ($(k)) d[k] = $(k).value; });
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch (_) {}
+}
+DRAFT_FIELDS.forEach(k => {
+  if (!$(k)) return;
+  $(k).addEventListener("input", saveDraft);
+  $(k).addEventListener("change", saveDraft);
+});
+["usePick", "useId", "check", "getPrompt", "render"].forEach(id => {
+  if ($(id)) $(id).addEventListener("click", () => setTimeout(saveDraft, 0));
+});
+$("file").addEventListener("change", () => setTimeout(saveDraft, 3000));
+
+async function restoreDraft() {
+  let d = null;
+  try { d = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null"); } catch (_) {}
+  if (!d) return;
+  DRAFT_FIELDS.forEach(k => {
+    if (k === "voice" || d[k] == null || !$(k)) return;
+    $(k).value = d[k];
+  });
+  draftVoice = d.voice || null;
+  if (!d.sourceId || !/^[0-9a-f]{32}$/.test(d.sourceId)) return;
+  sourceId = d.sourceId;
+  $("sid").value = sourceId;
+  await loadVideos(sourceId);
+  const opt = $("pick").selectedOptions[0];
+  const name = opt && opt.value === sourceId ? opt.textContent.split(" — ")[0] : sourceId.slice(0, 8) + "…";
+  say("m1", `Picked up where you left off: ${name}`, "ok");
+  open("s2");
+  try {
+    const lines = await transcriptLines(sourceId);
+    if (lines) {
+      say("m2", `Transcript present — ${lines} lines.`, "ok");
+      open("s3");
+      open("s4");
+      if ($("json").value.trim()) $("check").click();   // re-checks and opens step 5
+    }
+  } catch (_) { /* no transcript yet: step 2 is where to go */ }
+}
+
 // On load: show past shorts, and resume watching a render that was running.
+restoreDraft();
 loadRecent();
 (() => {
   let last = null;
@@ -642,6 +734,10 @@ loadRecent();
       if (id === "alex_caps") o.selected = true;
       sel.appendChild(o);
     });
+    try {
+      const d = JSON.parse(localStorage.getItem("cf-movie-draft") || "null");
+      if (d && d.capStyle && [...sel.options].some(o => o.value === d.capStyle)) sel.value = d.capStyle;
+    } catch (_) {}
   } catch (e) { /* keep the single default */ }
 })();
 </script>

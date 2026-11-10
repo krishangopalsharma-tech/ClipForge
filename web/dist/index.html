@@ -638,6 +638,22 @@
             });
           });
 
+        // One tool asks for another: Movie Shorts' "Edit all" opens Studio's
+        // batch editor on that batch. The message waits for Studio to load.
+        window.addEventListener("message", function (e) {
+          if (e.origin !== location.origin || !e.data || e.data.type !== "cf-open") return;
+          if (!URLS[e.data.tool]) return;
+          var fresh = !frames[e.data.tool];
+          show(e.data.tool);
+          if (!e.data.edit_all) return;
+          var f = frames[e.data.tool];
+          var send = function () {
+            f.contentWindow.postMessage({ type: "cf-edit-all", clip_id: e.data.edit_all }, location.origin);
+          };
+          if (fresh) f.addEventListener("load", send, { once: true });
+          else send();
+        });
+
         // A tool armed clips and wants them in the editor now.
         window.addEventListener("message", function (e) {
           if (e.origin !== location.origin) return;
