@@ -18,7 +18,7 @@ import tempfile
 from pathlib import Path
 from typing import BinaryIO
 
-from .models import InvalidVideoURLError
+from .models import BadInputError
 from .paths import MUSIC_DIR
 
 logger = logging.getLogger(__name__)
@@ -59,19 +59,19 @@ def save_track(filename: str, fileobj: BinaryIO) -> dict:
     never stored.
 
     Raises:
-        InvalidVideoURLError: unsupported extension, empty file, or no audio.
+        BadInputError: unsupported extension, empty file, or no audio.
     """
     ext = Path(filename or "").suffix.lower()
     is_video = ext in ALLOWED_VIDEO_EXTS
     if ext not in ALLOWED_MUSIC_EXTS and not is_video:
-        raise InvalidVideoURLError(
+        raise BadInputError(
             f"Unsupported file type '{ext or 'unknown'}'. Upload audio "
             "(mp3, m4a, wav, aac, ogg, flac) or a video (mp4, mov, mkv, webm…) "
             "to use its sound."
         )
     data = fileobj.read()
     if not data:
-        raise InvalidVideoURLError("The uploaded music file was empty.")
+        raise BadInputError("The uploaded music file was empty.")
 
     MUSIC_DIR.mkdir(parents=True, exist_ok=True)
     if is_video:
@@ -82,7 +82,7 @@ def save_track(filename: str, fileobj: BinaryIO) -> dict:
     try:
         dest.write_bytes(data)
     except OSError as exc:
-        raise InvalidVideoURLError(f"Could not save the music: {exc}") from exc
+        raise BadInputError(f"Could not save the music: {exc}") from exc
     logger.info("Saved music track %s", safe)
     return {"name": _pretty(safe), "file": safe}
 
@@ -95,7 +95,7 @@ def _save_audio_from_video(filename: str, data: bytes) -> dict:
     the music library.
 
     Raises:
-        InvalidVideoURLError: ffmpeg missing, the file has no audio, or it fails.
+        BadInputError: ffmpeg missing, the file has no audio, or it fails.
     """
     src_ext = Path(filename).suffix.lower() or ".mp4"
     stem = re.sub(r"[^A-Za-z0-9._ -]", "_", Path(filename).stem) or "track"
@@ -118,7 +118,7 @@ def _save_audio_from_video(filename: str, data: bytes) -> dict:
             text=True, encoding="utf-8", errors="replace",
         )
     except FileNotFoundError as exc:
-        raise InvalidVideoURLError(
+        raise BadInputError(
             "ffmpeg was not found on PATH — it's needed to pull the audio out of a video."
         ) from exc
     finally:
@@ -128,7 +128,7 @@ def _save_audio_from_video(filename: str, data: bytes) -> dict:
         dest.unlink(missing_ok=True)
         tail = (proc.stderr or "").strip().splitlines()[-6:]
         hint = "\n".join(tail)
-        raise InvalidVideoURLError(
+        raise BadInputError(
             "Couldn't get any audio out of that video (it may be silent or "
             "unreadable).\n" + hint
         )
@@ -152,12 +152,12 @@ def resolve_track(track: str) -> Path:
     """Resolve a track filename to a real path inside the music dir (path-safe).
 
     Raises:
-        InvalidVideoURLError: if the file is missing or escapes the music dir.
+        BadInputError: if the file is missing or escapes the music dir.
     """
     if not track:
-        raise InvalidVideoURLError("No music track was given.")
+        raise BadInputError("No music track was given.")
     # Only ever trust the bare filename — never a path.
     candidate = (MUSIC_DIR / Path(track).name).resolve()
     if MUSIC_DIR.resolve() not in candidate.parents or not candidate.is_file():
-        raise InvalidVideoURLError("That music track was not found.")
+        raise BadInputError("That music track was not found.")
     return candidate

@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Callable, Dict, Optional
 
 from . import transcriber, uploads
-from .models import InvalidVideoURLError, TranscriptionError
+from .models import BadInputError, TranscriptionError
 from .paths import TRANSCRIPTS_DIR
 
 logger = logging.getLogger("ai_video_clipper.pretranscribe")
@@ -126,6 +126,11 @@ def get_or_transcribe(
     if hit is not None:
         return hit
 
+    # Another video is being transcribed: say so, rather than sit at 0% with
+    # no word until the lock frees up (a long film can hold it for an hour).
+    if progress and _TRANSCRIBE_LOCK.locked():
+        progress(0.0, "Waiting for another transcription to finish…")
+
     with _TRANSCRIBE_LOCK:
         # Re-check now that we hold the lock — a concurrent run may have finished.
         hit = lookup()
@@ -211,9 +216,19 @@ def find_running(source_id: str) -> Optional[TranscriptJob]:
 
 
 def start(source_id: str, device: str, language: Optional[str] = None) -> TranscriptJob:
-    """Begin pre-transcribing `source_id` on a daemon thread."""
-    job = TranscriptJob(source_id, device, language)
+    """Begin pre-transcribing `source_id` on a daemon thread.
+
+    Asking again while that video is already being transcribed (a second click,
+    a reloaded page, another screen) returns the running job, so every view
+    follows the one real run and its progress — a second job would only wait
+    on the lock, silent at 0%, and then reuse the first one's result.
+    """
     with _JOBS_LOCK:
+        for running in _JOBS.values():
+            if (running.source_id == source_id and running.language == language
+                    and running.status == "running"):
+                return running
+        job = TranscriptJob(source_id, device, language)
         _JOBS[job.id] = job
     threading.Thread(target=_run, args=(job,), daemon=True).start()
     logger.info(
@@ -229,7 +244,7 @@ def _run(job: TranscriptJob) -> None:
         return
     try:
         path = uploads.resolve_upload(job.source_id)
-    except InvalidVideoURLError as exc:
+    except BadInputError as exc:
         job.update(status="error", error=str(exc), message="Source file not found.")
         return
 

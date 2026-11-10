@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClipForge — Movie Shorts</title>
+<style>
+  :root{
+    --bg:#0e0f13; --panel:#171921; --panel-2:#1e212b; --line:#2a2e3c;
+    --text:#e7e9ee; --muted:#9aa1b1; --accent:#6c8cff; --accent-2:#8f7bff;
+    --ok:#3ecf8e; --warn:#ffb020; --err:#ff5f6b;
+    --radius:12px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:28px 16px 80px}
+  h1{font-size:24px;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 24px}
+  .step{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+        padding:18px;margin-bottom:16px}
+  .step.off{opacity:.45;pointer-events:none}
+  .step h2{font-size:15px;margin:0 0 12px;display:flex;align-items:center;gap:9px}
+  .n{display:grid;place-items:center;width:23px;height:23px;border-radius:50%;
+     background:var(--accent);color:#fff;font-size:12px;font-weight:700;flex:none}
+  label{display:block;font-size:13px;color:var(--muted);margin:10px 0 5px}
+  input,select,textarea,button{font:inherit;color:var(--text)}
+  input,select,textarea{width:100%;background:var(--panel-2);border:1px solid var(--line);
+       border-radius:9px;padding:9px 11px}
+  textarea{min-height:150px;resize:vertical;font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
+  button{background:var(--accent);border:0;border-radius:9px;padding:10px 16px;
+         color:#fff;font-weight:600;cursor:pointer}
+  button.ghost{background:var(--panel-2);border:1px solid var(--line);color:var(--text)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+  .row>*{flex:1;min-width:130px}
+  .row>.auto{flex:0 0 auto;min-width:0}
+  .msg{margin-top:10px;font-size:13px;padding:9px 11px;border-radius:9px;display:none}
+  .msg.show{display:block}
+  .msg.ok{background:rgba(62,207,142,.12);color:var(--ok)}
+  .msg.err{background:rgba(255,95,107,.12);color:var(--err)}
+  .msg.warn{background:rgba(255,176,32,.12);color:var(--warn)}
+  .msg.info{background:var(--panel-2);color:var(--muted)}
+  .bar{height:6px;background:var(--panel-2);border-radius:4px;overflow:hidden;margin-top:10px}
+  .bar>i{display:block;height:100%;background:var(--accent);width:0;transition:width .3s}
+  .clip{background:var(--panel-2);border:1px solid var(--line);border-radius:10px;
+        padding:12px;margin-top:10px}
+  .clip h3{margin:0 0 3px;font-size:14px}
+  .meta{color:var(--muted);font-size:12.5px}
+  .blocks{display:flex;gap:3px;margin-top:9px;height:9px}
+  .blocks i{display:block;border-radius:2px}
+  .blocks i.vo{background:var(--accent)}
+  .blocks i.dl{background:var(--ok)}
+  .warns{margin:8px 0 0;padding-left:18px;color:var(--warn);font-size:12.5px}
+  .key{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-top:8px}
+  .key span{display:flex;align-items:center;gap:5px}
+  .key i{width:9px;height:9px;border-radius:2px;display:block}
+  video{width:100%;max-width:260px;border-radius:9px;margin-top:9px;background:#000}
+  code{background:var(--panel-2);padding:1px 5px;border-radius:4px;font-size:12.5px}
+  a{color:var(--accent)}
+  /* Inside the main app's panel the page has no need for its own way home. */
+  .embedded .navlinks{display:none}
+  .embedded .wrap{padding-top:18px}
+  .sent{display:inline-block;margin-left:8px;font-size:12px;color:var(--ok)}
+  .batch{margin-top:14px}
+  .batch > .meta{margin-bottom:8px}
+  a.btnlink{display:inline-flex;align-items:center;padding:9px 14px;border-radius:9px;
+    background:var(--panel-2);border:1px solid var(--line);color:var(--text);text-decoration:none;font-size:14px}
+  a.btnlink:hover{border-color:var(--accent)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Movie Shorts</h1>
+  <p class="sub">Cut a film into vertical shorts — narrated with Kokoro, or straight from the
+    original dialogue.<span class="navlinks"> <a href="/studio">Studio</a> · <a href="/">Dashboard</a></span></p>
+
+  <!-- 1 ---------------------------------------------------------------- -->
+  <div class="step" id="s1">
+    <h2><span class="n">1</span> The film</h2>
+    <label>Upload a video file (.mp4, .mkv, .mov …)</label>
+    <input type="file" id="file" accept="video/*">
+    <div class="row" style="margin-top:10px">
+      <div><label>…or pick a video you have already uploaded</label>
+        <select id="pick"><option value="">Loading…</option></select></div>
+      <div class="auto"><button class="ghost" id="usePick">Use it</button></div>
+    </div>
+    <p class="meta" id="pickNote">Newest first. A video marked “transcribed” can skip
+      straight past step 2.</p>
+    <details style="margin-top:8px">
+      <summary class="meta" style="cursor:pointer">…or paste a source id</summary>
+      <div class="row" style="margin-top:8px">
+        <div><input id="sid" placeholder="32-character id"></div>
+        <div class="auto"><button class="ghost" id="useId">Use it</button></div>
+      </div>
+    </details>
+    <div class="msg" id="m1"></div>
+  </div>
+
+  <!-- 2 ---------------------------------------------------------------- -->
+  <div class="step off" id="s2">
+    <h2><span class="n">2</span> The transcript</h2>
+    <p class="meta">A subtitle file exported from Premiere is the most accurate and takes
+      no time. Whisper is there when you have no subtitles.</p>
+    <label>Upload .srt / .vtt / timestamped .txt</label>
+    <input type="file" id="srt" accept=".srt,.vtt,.txt">
+    <div class="row" style="margin-top:12px">
+      <div class="auto"><button class="ghost" id="whisper">Transcribe with Whisper</button></div>
+      <div class="auto"><button class="ghost" id="checkTr">Check transcript</button></div>
+    </div>
+    <div class="bar" id="b2" style="display:none"><i></i></div>
+    <div class="msg" id="m2"></div>
+  </div>
+
+  <!-- 3 ---------------------------------------------------------------- -->
+  <div class="step off" id="s3">
+    <h2><span class="n">3</span> The prompt</h2>
+    <div class="row">
+      <div style="flex:2"><label>Film or series name</label>
+        <input id="title" placeholder="e.g. Breaking Bad — leave empty to let the model guess"></div>
+      <div><label>Season</label><input id="season" type="number" min="1" placeholder="—"></div>
+      <div><label>Episode</label><input id="episode" type="number" min="1" placeholder="—"></div>
+    </div>
+    <p class="meta">Naming it lets the model look it up — what people quote, which
+      scenes already circulate, the tone to match. ClipForge does no searching
+      itself; the chat you paste into does, so use one with web access.</p>
+    <div class="row">
+      <div><label>Mode</label>
+        <select id="mode">
+          <option value="voiceover_hybrid">Voiceover + real dialogue</option>
+          <option value="scene_edit">Scene edit (no narrator)</option>
+        </select></div>
+      <div><label>Shorts</label>
+        <select id="num">
+          <option value="" selected>Auto — the model decides</option>
+          <option value="3">3</option><option value="4">4</option>
+          <option value="5">5</option><option value="6">6</option>
+          <option value="8">8</option><option value="10">10</option>
+        </select></div>
+      <div><label>Seconds each</label>
+        <select id="len">
+          <option value="" selected>Auto — per short</option>
+          <option value="30">~30</option><option value="45">~45</option>
+          <option value="60">~60</option><option value="90">~90</option>
+          <option value="120">~120</option>
+        </select></div>
+      <div class="auto"><button id="getPrompt">Build prompt</button></div>
+    </div>
+    <label style="margin-top:12px">Paste this into Claude, Gemini or ChatGPT</label>
+    <textarea id="prompt" readonly placeholder="Press Build prompt"></textarea>
+    <div class="row" style="margin-top:9px">
+      <div class="auto"><button class="ghost" id="copy">Copy</button></div>
+    </div>
+    <div class="msg" id="m3"></div>
+  </div>
+
+  <!-- 4 ---------------------------------------------------------------- -->
+  <div class="step off" id="s4">
+    <h2><span class="n">4</span> The model's answer</h2>
+    <label>Paste the JSON it replied with</label>
+    <textarea id="json" placeholder='{ "mode": "...", "clips": [ ... ] }'></textarea>
+    <div class="row" style="margin-top:9px">
+      <div class="auto"><button id="check">Check it</button></div>
+    </div>
+    <div id="preview"></div>
+    <div class="msg" id="m4"></div>
+  </div>
+
+  <!-- 5 ---------------------------------------------------------------- -->
+  <div class="step off" id="s5">
+    <h2><span class="n">5</span> Build</h2>
+    <p class="meta">These are starting points. Each short becomes a video in your
+      library and lands in the main app as an ordinary clip, so you can change the
+      framing, caption style, logo and music there and watch it update — rather
+      than guessing here and waiting for a render to find out.</p>
+    <div class="row">
+      <div><label>Framing</label><select id="fit">
+        <option value="letterbox">Letterbox — whole frame on black</option>
+        <option value="crop">Fill — crop to vertical</option>
+        <option value="auto">Auto — follow a face, else full picture</option>
+        <option value="track">Track a face</option>
+        <option value="blur">Full picture over a blur</option>
+        <option value="square">Rounded square</option>
+      </select></div>
+      <div><label>Size</label><select id="aspect">
+        <option value="9:16">9:16 vertical</option>
+        <option value="16:9">16:9 wide</option>
+      </select></div>
+    </div>
+    <p class="meta" id="fitNote">Letterbox shows the whole film frame, so a movie that
+      already has black bars baked in ends up small — and any damaged edge in the file
+      stays visible. Fill or Auto crop those away.</p>
+    <div class="row">
+      <div><label>Narrator</label><select id="voice"><option>am_michael</option></select></div>
+      <div><label>Captions</label><select id="capStyle">
+        <option value="alex_caps">Alex caps (centred)</option>
+      </select></div>
+      <div><label>Caption size</label><select id="capScale">
+        <option value="0.6">Small</option>
+        <option value="0.8">Medium</option>
+        <option value="1" selected>Preset default</option>
+        <option value="1.25">Large</option>
+      </select></div>
+      <div><label>Caption place</label><select id="capPos">
+        <option value="">Preset default</option>
+        <option value="center">Over the picture</option>
+        <option value="bottom">Bottom</option>
+        <option value="top">Top</option>
+      </select></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div class="auto"><button id="render">Build shorts</button></div>
+    </div>
+    <div class="bar" id="b5" style="display:none"><i></i></div>
+    <div class="msg" id="m5"></div>
+    <div id="results"></div>
+  </div>
+
+  <!-- Every short you have made, so leaving this page loses nothing. -->
+  <div class="step" id="recent">
+    <h2><span class="n">&#9733;</span> Your shorts
+      <button class="ghost" id="recentRefresh" style="margin-left:auto;padding:5px 11px;font-size:12px">Refresh</button></h2>
+    <div style="color:var(--muted);font-size:13px">Your last Movie Shorts batches.
+      Send any short to the editor; this list stays here, so you can come back for the next one.</div>
+    <div class="msg" id="mR"></div>
+    <div id="recentList"></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let sourceId = null, poll = null;
+
+function say(el, text, kind = "info") {
+  const box = $(el);
+  box.textContent = text;
+  box.className = "msg show " + kind;
+}
+function open(step) { $(step).classList.remove("off"); }
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  let data = {};
+  try { data = await r.json(); } catch (e) { /* non-JSON error page */ }
+  if (!r.ok) throw new Error(data.detail || `${r.status} ${r.statusText}`);
+  return data;
+}
+
+// 1 — the film -------------------------------------------------------------
+$("file").onchange = async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  say("m1", `Uploading ${f.name}…`);
+  const body = new FormData();
+  body.append("file", f);
+  try {
+    const d = await api("/api/upload", { method: "POST", body });
+    sourceId = d.upload_id;
+    $("sid").value = sourceId;
+    loadVideos(sourceId);
+    say("m1", `Ready — ${f.name} is in your videos now.`, "ok");
+    open("s2");
+  } catch (err) { say("m1", err.message, "err"); }
+};
+async function loadVideos(select) {
+  try {
+    const d = await api("/api/movie/videos");
+    const list = d.videos || [];
+    if (!list.length) {
+      $("pick").innerHTML = '<option value="">No videos uploaded yet</option>';
+      return;
+    }
+    $("pick").innerHTML = list.map(v => {
+      const when = new Date(v.modified * 1000).toLocaleString();
+      const gb = (v.bytes / 1073741824);
+      const size = gb >= 1 ? gb.toFixed(1) + " GB"
+                           : Math.round(v.bytes / 1048576) + " MB";
+      const name = v.label || ("Video " + v.source_id.slice(0, 8));
+      const tr = v.has_transcript ? " · transcribed" : "";
+      return `<option value="${v.source_id}">${esc(name)} — ${when} · ${size}${tr}</option>`;
+    }).join("");
+    if (select) $("pick").value = select;
+  } catch (err) {
+    $("pick").innerHTML = '<option value="">Could not read your videos</option>';
+  }
+}
+loadVideos();
+
+$("usePick").onclick = () => {
+  const v = $("pick").value;
+  if (!v) return say("m1", "No video to pick.", "err");
+  sourceId = v;
+  $("sid").value = v;
+  const name = $("pick").selectedOptions[0].textContent.split(" — ")[0];
+  say("m1", `Using ${name}`, "ok");
+  open("s2");
+};
+$("useId").onclick = () => {
+  const v = $("sid").value.trim();
+  if (!v) return say("m1", "Paste an id first.", "err");
+  sourceId = v;
+  say("m1", `Using ${v}`, "ok");
+  open("s2");
+};
+
+// 2 — the transcript -------------------------------------------------------
+$("srt").onchange = async e => {
+  const f = e.target.files[0];
+  if (!f || !sourceId) return;
+  say("m2", `Reading ${f.name}…`);
+  const body = new FormData();
+  body.append("source_id", sourceId);
+  body.append("file", f);
+  try {
+    const d = await api("/api/upload-srt", { method: "POST", body });
+    say("m2", `Transcript loaded — ${d.segments ?? "?"} lines.`, "ok");
+    open("s3");
+  } catch (err) { say("m2", err.message, "err"); }
+};
+$("whisper").onclick = async () => {
+  if (!sourceId) return;
+  say("m2", "Starting Whisper…");
+  $("b2").style.display = "block";
+  try {
+    const d = await api("/api/pretranscribe", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_id: sourceId, device: "auto" }),
+    });
+    try { localStorage.setItem(TR_JOB_KEY, JSON.stringify({ id: d.pretranscribe_id, sourceId })); } catch (_) {}
+    watchTranscribe(d.pretranscribe_id);
+  } catch (err) { say("m2", err.message, "err"); }
+};
+
+// Follow a Whisper run. Its id is remembered, so a reload (or coming back to
+// this tab) reconnects to the run still going on the server instead of
+// showing nothing while the GPU works.
+const TR_JOB_KEY = "cf-movie-transcribe-job";
+let trPoll = null;
+function watchTranscribe(id) {
+  $("b2").style.display = "block";
+  clearInterval(trPoll);
+  const done = () => { clearInterval(trPoll); try { localStorage.removeItem(TR_JOB_KEY); } catch (_) {} };
+  const tick = async () => {
+    try {
+      const s = await api(`/api/pretranscribe/${id}`);
+      $("b2").firstElementChild.style.width = Math.round((s.progress || 0) * 100) + "%";
+      say("m2", s.message || "Working…");
+      if (s.status === "done") {
+        done(); say("m2", "Transcribed.", "ok"); open("s3"); open("s4");
+      } else if (s.status === "error") {
+        done(); say("m2", s.error || "Transcription failed.", "err");
+      }
+    } catch (err) {
+      done();
+      say("m2", "Lost track of the transcription (was the app restarted?). Press Transcribe again — "
+        + "it picks up a run that is still going.", "warn");
+    }
+  };
+  trPoll = setInterval(tick, 1500);
+  tick();
+}
+// How many transcript lines a video has (0 when none). The endpoint returns
+// the paste-ready text, one "[id] start-end text" line per segment, not JSON.
+async function transcriptLines(id) {
+  const r = await fetch(`/api/transcript/${id}`);
+  if (!r.ok) return 0;
+  const text = await r.text();
+  return (text.match(/^\[\d+\]/gm) || []).length;
+}
+
+$("checkTr").onclick = async () => {
+  if (!sourceId) return;
+  try {
+    const n = await transcriptLines(sourceId);
+    if (!n) return say("m2", "No transcript yet.", "warn");
+    say("m2", `Transcript present — ${n} lines.`, "ok");
+    open("s3");
+  } catch (err) { say("m2", "No transcript yet for this source.", "warn"); }
+};
+
+// 3 — the prompt -----------------------------------------------------------
+$("getPrompt").onclick = async () => {
+  if (!sourceId) return;
+  // Empty fields are LEFT OUT, not sent blank: an absent num_clips/clip_length
+  // is what tells the backend to let the model decide.
+  const q = new URLSearchParams({ mode: $("mode").value, source_id: sourceId });
+  [["num_clips", $("num").value], ["clip_length", $("len").value],
+   ["title", $("title").value.trim()], ["season", $("season").value],
+   ["episode", $("episode").value]].forEach(([k, v]) => { if (v) q.set(k, v); });
+  say("m3", "Building…");
+  try {
+    const d = await api(`/api/movie/prompt?${q}`);
+    $("prompt").value = d.full;
+    if (!d.segments) say("m3", "Built, but no transcript was attached — go back to step 2.", "warn");
+    else say("m3", `Built for ${d.subject} with ${d.segments} transcript lines. `
+      + "Paste it into a chat that can browse.", "ok");
+    open("s4");
+  } catch (err) { say("m3", err.message, "err"); }
+};
+$("copy").onclick = async () => {
+  const text = $("prompt").value;
+  if (!text) return;
+  try { await navigator.clipboard.writeText(text); say("m3", "Copied.", "ok"); }
+  catch (e) { $("prompt").select(); say("m3", "Press Ctrl+C to copy.", "info"); }
+};
+
+// 4 — the answer -----------------------------------------------------------
+$("check").onclick = async () => {
+  if (!sourceId) return;
+  say("m4", "Checking…");
+  $("preview").innerHTML = "";
+  try {
+    const d = await api("/api/movie/plan", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_id: sourceId, raw: $("json").value }),
+    });
+    renderPreview(d);
+    const mins = (d.total_duration / 60).toFixed(1);
+    say("m4", `${d.clips.length} shorts, about ${mins} minutes in total.`
+      + (d.skipped.length ? ` ${d.skipped.length} skipped.` : ""), "ok");
+    open("s5");
+    loadVoices(d.voice);
+  } catch (err) { say("m4", err.message, "err"); }
+};
+
+function renderPreview(d) {
+  const host = $("preview");
+  host.innerHTML = "";
+  d.clips.forEach(c => {
+    const div = document.createElement("div");
+    div.className = "clip";
+    const total = c.est_duration || 1;
+    const bars = c.timeline.map(b => {
+      const pct = Math.max(1, (b.est_duration / total) * 100);
+      const cls = b.type === "voiceover" ? "vo" : "dl";
+      return `<i class="${cls}" style="flex:0 0 ${pct.toFixed(1)}%"></i>`;
+    }).join("");
+    div.innerHTML =
+      `<h3>${esc(c.title || "Untitled")}</h3>
+       <div class="meta">${Math.round(c.est_duration)}s · ${c.timeline.length} blocks · ${esc(c.grade_preset)}</div>
+       ${c.hook_banner ? `<div class="meta">Banner: ${esc(c.hook_banner)}</div>` : ""}
+       <div class="blocks">${bars}</div>
+       ${c.warnings.length ? `<ul class="warns">${c.warnings.map(w => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}`;
+    host.appendChild(div);
+  });
+  const key = document.createElement("div");
+  key.className = "key";
+  key.innerHTML = `<span><i style="background:var(--accent)"></i>narration</span>
+                   <span><i style="background:var(--ok)"></i>original dialogue</span>`;
+  host.appendChild(key);
+}
+
+// 5 — render ---------------------------------------------------------------
+async function loadVoices(preferred) {
+  if (draftVoice) { preferred = draftVoice; draftVoice = null; }
+  try {
+    const d = await api("/api/movie/voices");
+    const sel = $("voice");
+    if (!d.running) { say("m5", d.error || "Kokoro is not running.", "warn"); return; }
+    sel.innerHTML = "";
+    d.voices.forEach(v => {
+      const o = document.createElement("option");
+      o.value = o.textContent = v;
+      if (v === preferred) o.selected = true;
+      sel.appendChild(o);
+    });
+  } catch (err) { say("m5", err.message, "warn"); }
+}
+
+$("render").onclick = async () => {
+  if (!sourceId) return;
+  say("m5", "Starting…");
+  $("b5").style.display = "block";
+  $("results").innerHTML = "";
+  try {
+    const d = await api("/api/movie/render", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source_id: sourceId, raw: $("json").value,
+        caption_style: $("capStyle").value,
+        fit_mode: $("fit").value,
+        aspect_ratio: $("aspect").value,
+        caption_scale: parseFloat($("capScale").value),
+        caption_position: $("capPos").value || null,
+      }),
+    });
+    try { localStorage.setItem(LAST_JOB_KEY, d.job_id); } catch (_) {}
+    watchJob(d.job_id);
+  } catch (err) { say("m5", err.message, "err"); }
+};
+
+// Follow a render until it ends. Also used on load, so a render still running
+// when you left the page picks up where it is.
+function watchJob(jobId) {
+    $("b5").style.display = "block";
+    clearInterval(poll);
+    poll = setInterval(async () => {
+      try {
+        const s = await api(`/api/movie/job/${jobId}`);
+        $("b5").firstElementChild.style.width = Math.round((s.progress || 0) * 100) + "%";
+        say("m5", s.message || "Working…");
+        if (s.status === "done" || s.status === "error") {
+          clearInterval(poll);
+          try { localStorage.removeItem(LAST_JOB_KEY); } catch (_) {}
+          showResults(s);
+        }
+      } catch (err) {
+        clearInterval(poll);
+        try { localStorage.removeItem(LAST_JOB_KEY); } catch (_) {}
+        say("m5", err.message, "err");
+      }
+    }, 1500);
+}
+
+// Running inside the main app's Studio/Movie panel (see web/dist/index.html)?
+const EMBEDDED = window.parent !== window;
+if (EMBEDDED) document.documentElement.classList.add("embedded");
+
+const LAST_JOB_KEY = "cf-movie-last-job";
+const SENT_KEY = "cf-movie-sent";
+function sentSet() {
+  try { return new Set(JSON.parse(localStorage.getItem(SENT_KEY) || "[]")); }
+  catch (_) { return new Set(); }
+}
+function markSent(sourceId) {
+  const s = sentSet();
+  s.add(sourceId);
+  try { localStorage.setItem(SENT_KEY, JSON.stringify([...s].slice(-300))); } catch (_) {}
+}
+
+// One short as a card: preview, download, and the button that sends it to the
+// editor. Used for a fresh render and for the "Your shorts" list alike.
+function clipCard(c) {
+  const div = document.createElement("div");
+  div.className = "clip";
+  const bits = [Math.round(c.duration) + "s"];
+  if (c.blocks) bits.push(c.blocks + " blocks");
+  if (c.narration_blocks) bits.push(c.narration_blocks + " narrated");
+  const missing = c.exists === false;
+  div.innerHTML =
+    `<h3>${esc(c.title)}</h3>
+     <div class="meta">${bits.join(" · ")}</div>`
+    + (missing
+      ? `<div class="meta" style="color:var(--warn)">The rendered file is gone (deleted in Storage?), but the short can still be styled again.</div>`
+      : `<video src="${c.url}" controls preload="metadata"></video>
+         <div class="meta"><a href="${c.url}" download>Download</a></div>`);
+  if (c.source_id) {
+    const style = document.createElement("button");
+    style.className = "ghost";
+    style.style.marginTop = "9px";
+    style.textContent = EMBEDDED ? "Edit in the editor →" : "Style this one in the main app →";
+    style.onclick = () => styleInApp(c);
+    div.appendChild(style);
+    if (sentSet().has(c.source_id)) {
+      const tick = document.createElement("span");
+      tick.className = "sent";
+      tick.textContent = "✓ sent before";
+      div.appendChild(tick);
+    }
+  }
+  return div;
+}
+
+function showResults(s) {
+  const host = $("results");
+  host.innerHTML = "";
+  (s.clips || []).forEach(c => host.appendChild(clipCard(c)));
+  if (s.status === "error") { say("m5", s.error || "Build failed.", "err"); return; }
+  say("m5", s.message + (s.failed.length ? ` — ${s.failed.join("; ")}` : ""),
+      s.failed.length ? "warn" : "ok");
+  if ((s.clips || []).length) {
+    const go = document.createElement("div");
+    go.className = "clip";
+    go.innerHTML = `<h3>Now style them</h3>
+      <div class="meta">Each short below has a button that opens it in the
+      editor, with the whole short already selected. There you can change the
+      framing, caption style, logo and music and see it before it renders.
+      They also stay listed under "Your shorts".</div>`;
+    if (s.clip_id) go.appendChild(batchActions(s.clip_id, s.clips.length));
+    host.prepend(go);
+  }
+  if (s.status === "done") loadRecent();
+}
+
+// Two ways to finish a whole batch: style every short at once in Studio's
+// batch editor (logo, music, captions, look), or download them all with the
+// SEO sheet. A batch is one history generation, named by its clip_id.
+function editAll(clipId) {
+  if (EMBEDDED) {
+    window.parent.postMessage({ type: "cf-open", tool: "studio", edit_all: clipId }, window.location.origin);
+  } else {
+    window.location.href = "/studio#edit-all=" + clipId;
+  }
+}
+function batchActions(clipId, n) {
+  const row = document.createElement("div");
+  row.className = "row";
+  row.style.cssText = "margin:8px 0 10px;gap:8px;flex-wrap:wrap";
+  const edit = document.createElement("button");
+  edit.textContent = `Edit all ${n} together →`;
+  edit.title = "Logo, music, caption style and place, look — applied to every short";
+  edit.onclick = () => editAll(clipId);
+  const dl = document.createElement("a");
+  dl.className = "btnlink";
+  dl.href = `/api/export/${clipId}`;
+  dl.textContent = "⬇ Download all + CSV (ZIP)";
+  row.appendChild(edit);
+  row.appendChild(dl);
+  return row;
+}
+
+// "Your shorts": the latest batches from history, so a page reload, a server
+// restart or a trip to the editor never loses them.
+async function loadRecent() {
+  const host = $("recentList");
+  try {
+    const d = await api("/api/movie/recent?limit=5");
+    const batches = d.batches || [];
+    host.innerHTML = "";
+    if (!batches.length) {
+      say("mR", "No shorts yet. Build some above and they will be listed here.");
+      return;
+    }
+    $("mR").className = "msg";
+    batches.forEach(b => {
+      const box = document.createElement("div");
+      box.className = "batch";
+      const when = b.created ? new Date(b.created).toLocaleString() : "";
+      box.innerHTML = `<div class="meta" style="color:var(--muted);font-size:13px">
+        <b style="color:var(--text)">${esc(b.source || "Movie Shorts")}</b> · ${esc(when)}</div>`;
+      box.appendChild(batchActions(b.clip_id, b.clips.length));
+      const grid = document.createElement("div");
+      grid.className = "grid";
+      b.clips.forEach(c => grid.appendChild(clipCard(c)));
+      box.appendChild(grid);
+      host.appendChild(box);
+    });
+  } catch (err) { say("mR", "Could not load your shorts: " + err.message, "warn"); }
+}
+$("recentRefresh").onclick = loadRecent;
+
+// Hand one short to the main app for styling.
+//
+// The dashboard already knows how to take a video it has on disk plus a list of
+// chosen windows — that is how Studio sends clips there. A movie short is its
+// own source video, so arming the whole of it says "render exactly this", and
+// the app's own caption, music and logo controls apply with a live preview.
+function styleInApp(c) {
+  if (!c.source_id) return say("m5", "This short has no source video to style.", "err");
+  try {
+    localStorage.setItem("cf-armed-clips", JSON.stringify({
+      source_id: c.source_id,
+      adopt: true,
+      flash_outro: false,
+      label: c.title,
+      windows: [{
+        start: 0,
+        end: Number(c.duration) || 0,
+        title: c.title,
+        reason: "A Movie Shorts short, whole.",
+      }],
+    }));
+  } catch (err) {
+    return say("m5", "Could not hand it over: " + err.message, "err");
+  }
+  markSent(c.source_id);
+  if (EMBEDDED) {
+    // The editor is the page around us: tell it, and it closes this panel and
+    // loads the short. This page stays alive behind it, list and all.
+    window.parent.postMessage({ type: "cf-armed" }, window.location.origin);
+    loadRecent();
+    return;
+  }
+  window.location.href = "/";
+}
+
+// The page remembers where you were — the film, the prompt settings, the
+// model's JSON and the build options — so leaving it (for the editor, a
+// reload, a restart) never means picking the film and pasting the JSON again.
+const DRAFT_KEY = "cf-movie-draft";
+const DRAFT_FIELDS = ["title", "season", "episode", "mode", "num", "len", "json",
+                      "fit", "aspect", "capStyle", "capScale", "capPos", "voice"];
+let draftVoice = null;
+function saveDraft() {
+  const d = { sourceId };
+  DRAFT_FIELDS.forEach(k => { if ($(k)) d[k] = $(k).value; });
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch (_) {}
+}
+DRAFT_FIELDS.forEach(k => {
+  if (!$(k)) return;
+  $(k).addEventListener("input", saveDraft);
+  $(k).addEventListener("change", saveDraft);
+});
+["usePick", "useId", "check", "getPrompt", "render"].forEach(id => {
+  if ($(id)) $(id).addEventListener("click", () => setTimeout(saveDraft, 0));
+});
+$("file").addEventListener("change", () => setTimeout(saveDraft, 3000));
+
+async function restoreDraft() {
+  let d = null;
+  try { d = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null"); } catch (_) {}
+  if (!d) return;
+  DRAFT_FIELDS.forEach(k => {
+    if (k === "voice" || d[k] == null || !$(k)) return;
+    $(k).value = d[k];
+  });
+  draftVoice = d.voice || null;
+  if (!d.sourceId || !/^[0-9a-f]{32}$/.test(d.sourceId)) return;
+  sourceId = d.sourceId;
+  $("sid").value = sourceId;
+  await loadVideos(sourceId);
+  const opt = $("pick").selectedOptions[0];
+  const name = opt && opt.value === sourceId ? opt.textContent.split(" — ")[0] : sourceId.slice(0, 8) + "…";
+  say("m1", `Picked up where you left off: ${name}`, "ok");
+  open("s2");
+  try {
+    const lines = await transcriptLines(sourceId);
+    if (lines) {
+      say("m2", `Transcript present — ${lines} lines.`, "ok");
+      open("s3");
+      open("s4");
+      if ($("json").value.trim()) $("check").click();   // re-checks and opens step 5
+    } else {
+      // No transcript yet: maybe Whisper is still on it from before the reload.
+      let tr = null;
+      try { tr = JSON.parse(localStorage.getItem(TR_JOB_KEY) || "null"); } catch (_) {}
+      if (tr && tr.sourceId === sourceId) watchTranscribe(tr.id);
+    }
+  } catch (_) { /* no transcript yet: step 2 is where to go */ }
+}
+
+// On load: show past shorts, and resume watching a render that was running.
+restoreDraft();
+loadRecent();
+(() => {
+  let last = null;
+  try { last = localStorage.getItem(LAST_JOB_KEY); } catch (_) {}
+  if (last) { say("m5", "Checking on your last render…"); watchJob(last); }
+})();
+
+// Caption styles, filled from the backend so the list never drifts.
+(async () => {
+  try {
+    const d = await api("/api/caption-styles");
+    const list = d.styles || d.presets || [];
+    const sel = $("capStyle");
+    if (!list.length) return;
+    sel.innerHTML = "";
+    list.forEach(p => {
+      const id = p.id || p.key || p;
+      const o = document.createElement("option");
+      o.value = id;
+      o.textContent = p.label || p.name || id;
+      if (id === "alex_caps") o.selected = true;
+      sel.appendChild(o);
+    });
+    try {
+      const d = JSON.parse(localStorage.getItem("cf-movie-draft") || "null");
+      if (d && d.capStyle && [...sel.options].some(o => o.value === d.capStyle)) sel.value = d.capStyle;
+    } catch (_) {}
+  } catch (e) { /* keep the single default */ }
+})();
+</script>
+</body>
+</html>

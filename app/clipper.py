@@ -244,8 +244,25 @@ def _reframe_stage(width: int, height: int, plan: Optional[ReframePlan], work_di
     * blur   the whole picture at full width centred over a blurred, darkened
              copy that covers the frame. The copy is blurred at 1/8 size and
              scaled back up, which is far cheaper than blurring 1080x1920.
+    * letterbox
+             the whole picture fitted inside the frame on plain black bars (the
+             movie-recap look). Nothing is cropped in either direction.
     * else   the plain cover + centre crop.
     """
+    if plan is not None and plan.mode == "letterbox":
+        # The black canvas is built from the source (split + drawbox) rather
+        # than a `color` input so it shares the video's fps and timing exactly
+        # — the same trick square mode uses. `decrease` fits the picture inside
+        # the frame whichever way it is too big, so a 2.39:1 scope print gets
+        # bars top and bottom and a tall phone video gets them at the sides.
+        return (
+            "[0:v]split[bgs][fgs];"
+            f"[bgs]scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},drawbox=0:0:iw:ih:black:t=fill[bg];"
+            f"[fgs]scale={width}:{height}:force_original_aspect_ratio=decrease"
+            ":force_divisible_by=2[fg];"
+            "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[v0]"
+        )
     if plan is not None and plan.mode == "track" and plan.commands_path is not None:
         script = _rel_for_filter(plan.commands_path, work_dir)
         return (
@@ -376,7 +393,10 @@ def _music_audio_graph(mus_idx: int, volume: float, duck: float = 70.0) -> str:
 # Shared output-encoding args (everything after the filter graph).
 _ENCODE_ARGS = [
     "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
+    # A fixed output rate matters once more than one audio source is in play:
+    # movie audio is usually 48 kHz and Kokoro's narration is 24 kHz, and
+    # concatenating streams of different rates either fails outright or drifts.
+    "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-movflags", "+faststart",
 ]
 
 

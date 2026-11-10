@@ -31,16 +31,18 @@ from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
 from . import (
-    captions, export, fonts, history, jobs, manual, mood, music, overlays, prefetch,
-    pretranscribe, profiles, rendering, sources, speech, storage, transcriber, uploads,
-    verify,
+    captions, export, fonts, history, jobs, kokoro_tts, manual, mood, movie,
+    movie_jobs, music, overlays, prefetch, pretranscribe, profiles, rendering,
+    sources, speech, storage, transcriber, uploads, verify,
 )
 from .models import (
-    ClipChanges, Device, GenerateRequest, InvalidVideoURLError, TranscriptionError,
+    AspectRatio, ClipChanges, Device, FitMode, GenerateRequest, BadInputError,
+    TranscriptionError,
 )
 from .paths import (
-    CLIPS_DIR, DEFAULT_CLIPS_DIR, FONTS_DIR, MUSIC_DIR, STATIC_DIR, WEB_DIST_DIR,
-    WORK_DIR, ensure_dirs, load_config, save_config,
+    CLIPS_DIR, DEFAULT_CLIPS_DIR, DOWNLOADS_DIR, FONTS_DIR, MUSIC_DIR,
+    STATIC_DIR, TRANSCRIPTS_DIR, WEB_DIST_DIR, WORK_DIR, ensure_dirs,
+    load_config, save_config,
 )
 
 logging.basicConfig(
@@ -144,7 +146,7 @@ def upload(file: UploadFile = File(...)) -> dict:
     """
     try:
         info = uploads.save_upload(file.filename, file.file)
-    except InvalidVideoURLError as exc:
+    except BadInputError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     finally:
         file.file.close()
@@ -172,11 +174,11 @@ def upload_srt(
         fps = None
         try:
             fps = uploads.probe_fps(uploads.resolve_upload(source_id))
-        except InvalidVideoURLError:
+        except BadInputError:
             pass
         content = file.file.read()
         res = uploads.save_srt_for_source(source_id, content, file.filename or "", fps)
-    except InvalidVideoURLError as exc:
+    except BadInputError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     finally:
         file.file.close()
@@ -275,7 +277,7 @@ def upload_font(file: UploadFile = File(...)) -> dict:
     """Accept a user .ttf/.otf font and register it for use in captions."""
     try:
         info = fonts.save_user_font(file.filename, file.file)
-    except InvalidVideoURLError as exc:
+    except BadInputError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     finally:
         file.file.close()
@@ -293,7 +295,7 @@ def upload_music(file: UploadFile = File(...)) -> dict:
     """Accept a user audio file and add it to the background-music library."""
     try:
         info = music.save_track(file.filename, file.file)
-    except InvalidVideoURLError as exc:
+    except BadInputError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     finally:
         file.file.close()
@@ -503,6 +505,268 @@ def manual_windows(req: ManualWindowsRequest) -> dict:
     }
 
 
+# --------------------------------------------------------------------------- #
+# Movie Shorts
+# --------------------------------------------------------------------------- #
+class MoviePlanRequest(BaseModel):
+    source_id: str
+    raw: str
+    language: Optional[str] = None
+
+
+class MovieRenderRequest(BaseModel):
+    source_id: str
+    raw: str
+    language: Optional[str] = None
+    caption_style: str = "alex_caps"
+    # Same framing choices as the rest of the app. Letterbox shows the whole
+    # frame, which also means it keeps any damaged edge the source has; the
+    # cropping modes remove it.
+    fit_mode: FitMode = FitMode.LETTERBOX
+    aspect_ratio: AspectRatio = AspectRatio.NINE_16
+    caption_scale: float = Field(default=1.0, ge=0.3, le=2.0)
+    caption_position: Optional[str] = None  # top | center | bottom
+
+
+@app.get("/api/movie/prompt")
+def movie_prompt(
+    mode: str = movie.VOICEOVER_HYBRID,
+    num_clips: Optional[int] = None,
+    clip_length: Optional[float] = None,
+    title: Optional[str] = None,
+    season: Optional[str] = None,
+    episode: Optional[str] = None,
+    source_id: Optional[str] = None,
+    language: Optional[str] = None,
+) -> dict:
+    """The paste-ready instruction block, and the transcript to send with it.
+
+    Served from the backend for the same reason as ``/api/clip-prompt``: the
+    prompt and the validator that has to accept the reply live together, so
+    they cannot drift apart.
+
+    ``num_clips`` and ``clip_length`` left out hand those choices to the model.
+    ``title``/``season``/``episode`` name the work so the model can look it up
+    — ClipForge never searches anything itself, the chat the prompt is pasted
+    into does.
+    """
+    try:
+        prompt = movie.build_movie_prompt(
+            mode, num_clips, clip_length, title, season, episode,
+        )
+    except movie.MovieJsonError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    transcript_text = ""
+    segments = 0
+    if source_id:
+        transcript = pretranscribe.load(source_id, language)
+        if transcript:
+            transcript_text = manual.format_transcript_text(transcript, source_id)
+            segments = len(transcript.get("segments") or [])
+
+    return {
+        "status": "ok",
+        "mode": mode,
+        "prompt": prompt,
+        "subject": movie.subject_line(title, season, episode),
+        "transcript": transcript_text,
+        "segments": segments,
+        "full": prompt + transcript_text if transcript_text else prompt,
+    }
+
+
+@app.get("/api/movie/voices")
+def movie_voices() -> dict:
+    """Kokoro's voices, or why it cannot be reached."""
+    state = kokoro_tts.status()
+    return {
+        "status": "ok" if state["ok"] else "unavailable",
+        "running": state["ok"],
+        "voices": state.get("voices") or [],
+        "error": state.get("error"),
+        "url": kokoro_tts.KOKORO_URL,
+    }
+
+
+_HEX32 = re.compile(r"^[0-9a-f]{32}$")
+
+
+@app.get("/api/videos")
+@app.get("/api/movie/videos")
+def movie_videos() -> dict:
+    """Videos already in the library, newest first.
+
+    A source id is a 32-character hash nobody can be expected to remember, so
+    both pickers that reuse a video — the dashboard's and Movie Shorts' step 1
+    — read their list from here, and the id stays an implementation detail.
+    """
+    labels: dict = {}
+    try:
+        for entry in history.list_entries():
+            sid = entry.get("source_id")
+            if sid and sid not in labels and entry.get("source"):
+                labels[sid] = entry["source"]
+            # A Movie Shorts short is its own source video; name it after the
+            # short instead of leaving a bare id.
+            for clip in entry.get("clips") or []:
+                csid = (clip.get("recipe") or {}).get("source_id")
+                if csid and csid != sid and csid not in labels and clip.get("title"):
+                    labels[csid] = "Short: " + clip["title"]
+    except Exception:  # noqa: BLE001 - a broken history must not hide the videos
+        logger.exception("Could not read history for video labels")
+
+    videos = []
+    for video in DOWNLOADS_DIR.glob("*"):
+        if not video.is_file() or video.suffix == ".part":
+            continue
+        sid = video.stem
+        if not _HEX32.match(sid):
+            continue
+        stat = video.stat()
+        name_file = DOWNLOADS_DIR / f"{sid}.name.txt"
+        label = ""
+        if name_file.exists():
+            try:
+                label = name_file.read_text(encoding="utf-8").strip()
+            except OSError:
+                label = ""
+        videos.append({
+            "source_id": sid,
+            "label": label or labels.get(sid) or "",
+            "ext": video.suffix,
+            "bytes": stat.st_size,
+            "modified": stat.st_mtime,
+            "has_transcript": any(TRANSCRIPTS_DIR.glob(f"{sid}__*.json")),
+        })
+    videos.sort(key=lambda v: v["modified"], reverse=True)
+    return {"videos": videos}
+
+
+@app.post("/api/movie/plan")
+def movie_plan(req: MoviePlanRequest) -> dict:
+    """Validate pasted movie JSON and resolve it against the transcript.
+
+    Shows exactly what would be rendered — every block's real times, the
+    estimated length of each short and anything questionable about it — before
+    the GPU is committed to it.
+    """
+    transcript = pretranscribe.load(req.source_id, req.language)
+    if transcript is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No transcript for this video yet. Transcribe it first.",
+        )
+    try:
+        payload = movie.parse_movie_json(req.raw)
+        resolved = movie.resolve_payload(payload, transcript)
+    except movie.MovieJsonError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"status": "ok", **resolved}
+
+
+@app.post("/api/movie/render")
+def movie_render(req: MovieRenderRequest) -> dict:
+    """Resolve the JSON again, then render every short on a background thread."""
+    transcript = pretranscribe.load(req.source_id, req.language)
+    if transcript is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No transcript for this video yet. Transcribe it first.",
+        )
+    try:
+        payload = movie.parse_movie_json(req.raw)
+        resolved = movie.resolve_payload(payload, transcript)
+    except movie.MovieJsonError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    needs_voice = any(
+        block["type"] == "voiceover"
+        for clip in resolved["clips"] for block in clip["timeline"]
+    )
+    if needs_voice and not kokoro_tts.status()["ok"]:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "These shorts need narration, but Kokoro is not answering. "
+                + kokoro_tts.START_HINT
+            ),
+        )
+
+    try:
+        source = uploads.resolve_upload(req.source_id)
+    except BadInputError:
+        raise HTTPException(status_code=404, detail="The source video is missing.")
+
+    overrides = {"font_scale": req.caption_scale, "position": req.caption_position}
+    job = movie_jobs.start(
+        req.source_id, resolved, source,
+        caption_style=req.caption_style,
+        caption_overrides={k: v for k, v in overrides.items() if v is not None},
+        fit_mode=req.fit_mode.value,
+        aspect_ratio=req.aspect_ratio.value,
+    )
+    return {"status": "ok", "job_id": job.id, "clips": len(resolved["clips"])}
+
+
+@app.get("/api/movie/job/{job_id}")
+def movie_job(job_id: str) -> dict:
+    """Progress for one movie render."""
+    job = movie_jobs.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="No such render.")
+    return job.snapshot()
+
+
+@app.get("/api/movie/recent")
+def movie_recent(limit: int = 5) -> dict:
+    """The latest Movie Shorts batches, newest first, read from history.
+
+    A render job lives only in memory, so leaving the page (or restarting the
+    server) used to lose the list of finished shorts and their "style it"
+    buttons. History already records every short with the recipe that holds
+    its own source id, which is all the hand-off needs.
+    """
+    batches = []
+    for entry in history.list_entries():
+        if not (entry.get("settings") or {}).get("movie_shorts"):
+            continue
+        clip_id = entry.get("clip_id", "")
+        clips = []
+        for c in entry.get("clips", []):
+            recipe = c.get("recipe") or {}
+            index = c.get("index", 0)
+            clips.append({
+                "index": index,
+                "title": c.get("title") or f"Short {index + 1}",
+                "hook_banner": c.get("hook"),
+                "description": c.get("description"),
+                "duration": float(c.get("end") or 0.0),
+                "source_id": recipe.get("source_id"),
+                "url": f"/clips/{clip_id}/{index}.mp4",
+                "exists": bool(c.get("exists")),
+            })
+        batches.append({
+            "clip_id": clip_id,
+            "created": entry.get("created"),
+            "source": entry.get("source"),
+            "film_source_id": entry.get("source_id"),
+            "clips": clips,
+        })
+        if len(batches) >= max(1, min(limit, 50)):
+            break
+    return {"batches": batches}
+
+
+@app.get("/movie")
+def movie_page() -> FileResponse:
+    """The Movie Shorts page."""
+    page = STATIC_DIR / "movie.html"
+    if not page.exists():
+        raise HTTPException(status_code=404, detail="movie.html is missing.")
+    return FileResponse(str(page))
+
+
 @app.get("/clips/{clip_id}/{filename}")
 def clip_file(clip_id: str, filename: str) -> FileResponse:
     """Serve one rendered clip or its .ass subtitle file for preview/download.
@@ -670,7 +934,7 @@ def download_file(download_id: str) -> FileResponse:
     """
     try:
         path = uploads.resolve_upload(download_id)
-    except InvalidVideoURLError:
+    except BadInputError:
         raise HTTPException(status_code=404, detail="Downloaded video not found.")
     return FileResponse(str(path))
 
@@ -793,7 +1057,7 @@ def upload_overlay(file: UploadFile = File(...)) -> dict:
     """Add a logo (PNG with transparency is best; JPG and WebP work too)."""
     try:
         info = overlays.save_logo(file.filename, file.file)
-    except InvalidVideoURLError as exc:
+    except BadInputError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     finally:
         file.file.close()

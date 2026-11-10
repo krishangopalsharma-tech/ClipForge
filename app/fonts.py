@@ -23,7 +23,7 @@ import threading
 from pathlib import Path
 from typing import BinaryIO, Optional
 
-from .models import InvalidVideoURLError
+from .models import BadInputError
 from .paths import FONTS_DIR
 
 logger = logging.getLogger(__name__)
@@ -239,20 +239,20 @@ def save_user_font(filename: str, fileobj: BinaryIO) -> dict:
     Returns ``{"family": <name>, "file": <stored filename>}``.
 
     Raises:
-        InvalidVideoURLError: unsupported extension, empty file, or unreadable font.
+        BadInputError: unsupported extension, empty file, or unreadable font.
     """
     ext = Path(filename or "").suffix.lower()
     if ext not in ALLOWED_FONT_EXTS:
-        raise InvalidVideoURLError(
+        raise BadInputError(
             f"Unsupported font type '{ext or 'unknown'}'. Upload a .ttf or .otf file."
         )
     data = fileobj.read()
     if not data:
-        raise InvalidVideoURLError("The uploaded font file was empty.")
+        raise BadInputError("The uploaded font file was empty.")
 
     family = _family_from_sfnt(data)
     if not family:
-        raise InvalidVideoURLError(
+        raise BadInputError(
             "Could not read a font family name from that file. Is it a valid font?"
         )
 
@@ -261,7 +261,7 @@ def save_user_font(filename: str, fileobj: BinaryIO) -> dict:
     try:
         dest.write_bytes(data)
     except OSError as exc:
-        raise InvalidVideoURLError(f"Could not save the font: {exc}") from exc
+        raise BadInputError(f"Could not save the font: {exc}") from exc
 
     entries = [e for e in _read_user_registry() if e.get("file") != safe]
     entries.append({"family": family, "file": safe})

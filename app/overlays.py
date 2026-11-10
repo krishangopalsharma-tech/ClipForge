@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 from typing import Any, BinaryIO, List
 
-from .models import InvalidVideoURLError
+from .models import BadInputError
 from .paths import ASSETS_DIR
 
 OVERLAYS_DIR = ASSETS_DIR / "overlays"
@@ -71,18 +71,18 @@ def save_logo(filename: str, fileobj: BinaryIO) -> dict:
     """Store an uploaded logo. PNG with transparency is the useful case.
 
     Raises:
-        InvalidVideoURLError: wrong type, too big, empty, or not really an image.
+        BadInputError: wrong type, too big, empty, or not really an image.
     """
     ext = Path(filename or "").suffix.lower()
     if ext not in ALLOWED_EXTS:
-        raise InvalidVideoURLError("A logo must be a PNG, JPG or WebP image.")
+        raise BadInputError("A logo must be a PNG, JPG or WebP image.")
     data = fileobj.read(MAX_LOGO_BYTES + 1)
     if not data:
-        raise InvalidVideoURLError("The uploaded logo was empty.")
+        raise BadInputError("The uploaded logo was empty.")
     if len(data) > MAX_LOGO_BYTES:
-        raise InvalidVideoURLError("That logo is larger than 5 MB.")
+        raise BadInputError("That logo is larger than 5 MB.")
     if not _looks_like_image(data):
-        raise InvalidVideoURLError("That file is not a valid image.")
+        raise BadInputError("That file is not a valid image.")
     safe = re.sub(r"[^A-Za-z0-9._ -]", "_", Path(filename).name) or f"logo{ext}"
     name = _unique_name(safe)
     OVERLAYS_DIR.mkdir(parents=True, exist_ok=True)

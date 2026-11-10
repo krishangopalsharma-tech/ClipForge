@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import BinaryIO, Optional, Union
 
 from . import cues
-from .models import InvalidVideoURLError
+from .models import BadInputError
 from .paths import DOWNLOADS_DIR, TRANSCRIPTS_DIR
 
 logger = logging.getLogger(__name__)
@@ -54,11 +54,11 @@ def save_upload(filename: str, fileobj: BinaryIO) -> dict:
         any transcript cached for it is still valid.
 
     Raises:
-        InvalidVideoURLError: unsupported extension or empty file.
+        BadInputError: unsupported extension or empty file.
     """
     ext = Path(filename or "").suffix.lower()
     if ext not in ALLOWED_EXTS:
-        raise InvalidVideoURLError(
+        raise BadInputError(
             f"Unsupported file type '{ext or 'unknown'}'. Please upload a video "
             f"file ({', '.join(sorted(ALLOWED_EXTS))})."
         )
@@ -81,11 +81,11 @@ def save_upload(filename: str, fileobj: BinaryIO) -> dict:
     except OSError as exc:
         temp.unlink(missing_ok=True)
         logger.exception("Failed to save upload %s", filename)
-        raise InvalidVideoURLError(f"Could not save the uploaded file: {exc}") from exc
+        raise BadInputError(f"Could not save the uploaded file: {exc}") from exc
 
     if size == 0:
         temp.unlink(missing_ok=True)
-        raise InvalidVideoURLError("The uploaded file was empty.")
+        raise BadInputError("The uploaded file was empty.")
 
     # 32 hex chars keeps the id the same shape the rest of the app validates.
     upload_id = digest.hexdigest()[:32]
@@ -106,14 +106,22 @@ def save_upload(filename: str, fileobj: BinaryIO) -> dict:
         except OSError as exc:
             temp.unlink(missing_ok=True)
             logger.exception("Failed to finalise upload %s", filename)
-            raise InvalidVideoURLError(
+            raise BadInputError(
                 f"Could not save the uploaded file: {exc}"
             ) from exc
         logger.info("Saved upload %s -> %s (%d bytes)", filename, dest.name, size)
 
+    # Remember what the file was called. The id is a hash, so without this the
+    # only way to tell two uploads apart later is by size and date.
+    label = Path(filename or "video").name
+    try:
+        (DOWNLOADS_DIR / f"{upload_id}.name.txt").write_text(label, encoding="utf-8")
+    except OSError:
+        logger.warning("Could not record the name of upload %s", upload_id)
+
     return {
         "upload_id": upload_id,
-        "filename": Path(filename or "video").name,
+        "filename": label,
         "ext": ext,
         "reused": reused,
     }
@@ -123,13 +131,13 @@ def resolve_upload(upload_id: str) -> Path:
     """Map an ``upload_id`` back to the saved file path.
 
     Raises:
-        InvalidVideoURLError: malformed id or file no longer present.
+        BadInputError: malformed id or file no longer present.
     """
     if not upload_id or not _ID_RE.match(upload_id):
-        raise InvalidVideoURLError("Invalid upload reference.")
+        raise BadInputError("Invalid upload reference.")
     matches = sorted(DOWNLOADS_DIR.glob(f"{upload_id}.*"))
     if not matches:
-        raise InvalidVideoURLError(
+        raise BadInputError(
             "The uploaded file could not be found. Please upload it again."
         )
     return matches[0]
@@ -292,11 +300,11 @@ def save_srt_for_source(
         try:
             parsed = cues.parse_cues(srt_text, filename, fps)
         except cues.CueError as exc:
-            raise InvalidVideoURLError(str(exc)) from exc
+            raise BadInputError(str(exc)) from exc
         transcript = cues.cues_to_transcript(parsed)
         kind = "vtt" if cues.looks_like_vtt(srt_text) else "text"
     if not transcript["segments"]:
-        raise InvalidVideoURLError(
+        raise BadInputError(
             "No valid subtitle segments could be parsed from that file."
         )
 

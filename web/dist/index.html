@@ -17,9 +17,23 @@
     <a href="/studio" id="cf-studio-link" title="Pick clip moments with Claude or Gemini">
       <span>&#9889;</span> Studio
     </a>
+    <a href="/movie" id="cf-movie-link" title="Cut a film into narrated vertical shorts">
+      <span>&#127916;</span> Movie Shorts
+    </a>
     <a href="/storage" id="cf-storage-link" title="Free up disk space">
       <span>&#128190;</span> Storage
     </a>
+    <!-- Reuse a video already on disk, instead of uploading it a second time. -->
+    <button type="button" id="cf-recent-btn" title="Load a video you have already uploaded">
+      <span>&#128249;</span> Your videos
+    </button>
+    <div id="cf-recent" hidden>
+      <header>
+        <b>Your videos</b>
+        <button type="button" id="cf-recent-close">Close</button>
+      </header>
+      <div id="cf-recent-list"><p class="cf-note">Loading&hellip;</p></div>
+    </div>
     <a href="/api/export.csv" id="cf-export-link" title="Download every clip of this batch as a ZIP, with a CSV to track your uploads" hidden>
       <span>&#11015;</span> <b>All clips + CSV</b>
     </a>
@@ -34,8 +48,18 @@
       }
       #cf-studio-link:hover{background:#8f74ff; transform:translateY(-1px)}
 
-      #cf-storage-link{
+      #cf-movie-link{
         position:fixed; right:18px; bottom:66px; z-index:9999;
+        display:flex; align-items:center; gap:7px;
+        padding:9px 15px; border-radius:999px;
+        background:#1e212b; border:1px solid #7c5cff66; color:#e3dcff;
+        text-decoration:none; font:600 13px/1 Outfit,system-ui,sans-serif;
+        box-shadow:0 6px 18px #0007; transition:.15s;
+      }
+      #cf-movie-link:hover{border-color:#7c5cff; color:#fff}
+
+      #cf-storage-link{
+        position:fixed; right:18px; bottom:114px; z-index:9999;
         display:flex; align-items:center; gap:7px;
         padding:9px 15px; border-radius:999px;
         background:#1e212b; border:1px solid #ffffff1f; color:#cfd3de;
@@ -45,7 +69,7 @@
       #cf-storage-link:hover{border-color:#7c5cff; color:#fff}
 
       #cf-export-link{
-        position:fixed; right:18px; bottom:106px; z-index:9999;
+        position:fixed; right:18px; bottom:162px; z-index:9999;
         display:flex; align-items:center; gap:7px;
         padding:9px 15px; border-radius:999px;
         background:#1e212b; border:1px solid #3ecf8e66; color:#c9f5e0;
@@ -69,7 +93,138 @@
         border-radius:999px; padding:5px 11px; font:inherit; font-size:12px; cursor:pointer;
       }
       #cf-armed button:hover{background:#ffffff24}
+
+      #cf-recent-btn{
+        position:fixed; left:18px; bottom:18px; z-index:9999;
+        display:flex; align-items:center; gap:7px;
+        padding:9px 15px; border-radius:999px;
+        background:#1e212b; border:1px solid #ffffff1f; color:#cfd3de;
+        font:600 13px/1 Outfit,system-ui,sans-serif; cursor:pointer;
+        box-shadow:0 6px 18px #0007; transition:.15s;
+      }
+      #cf-recent-btn:hover{border-color:#7c5cff; color:#fff}
+      #cf-recent{
+        position:fixed; left:18px; bottom:62px; z-index:10000;
+        width:380px; max-height:70vh; overflow:auto;
+        padding:14px; border-radius:16px;
+        background:#14161d; border:1px solid #ffffff1f;
+        box-shadow:0 18px 50px #000b;
+        font:400 13px/1.45 Outfit,system-ui,sans-serif; color:#cfd3de;
+      }
+      #cf-recent[hidden]{display:none}
+      #cf-recent header{
+        display:flex; align-items:center; justify-content:space-between;
+        margin-bottom:10px; color:#fff;
+      }
+      #cf-recent header button{
+        background:#ffffff14; border:1px solid #ffffff26; color:#e9e4ff;
+        border-radius:999px; padding:4px 10px; font:inherit; font-size:12px; cursor:pointer;
+      }
+      #cf-recent .cf-note{color:#8b90a0; font-size:12px; margin:6px 2px}
+      #cf-recent .cf-row{
+        display:block; width:100%; text-align:left;
+        padding:9px 11px; margin-bottom:6px; border-radius:11px;
+        background:#1b1e27; border:1px solid #ffffff14; color:#e6e8ef;
+        font:inherit; cursor:pointer; transition:.12s;
+      }
+      #cf-recent .cf-row:hover{border-color:#7c5cff; background:#20243040}
+      #cf-recent .cf-row b{display:block; font-weight:600; color:#fff;
+        overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+      #cf-recent .cf-row span{color:#8b90a0; font-size:12px}
+      #cf-recent .cf-row em{color:#9ad7b4; font-style:normal}
+
+      /* In-app panel: Studio, Movie Shorts and Storage open over the editor
+         instead of replacing it, and stay loaded while hidden. */
+      #cf-panel{
+        position:fixed; inset:0; z-index:10002;
+        display:flex; flex-direction:column;
+        background:#0e0f13;
+      }
+      #cf-panel[hidden]{display:none}
+      #cf-panel-bar{
+        display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+        padding:10px 16px; border-bottom:1px solid #ffffff14;
+        background:#12131a;
+        font:600 13px/1 Outfit,system-ui,sans-serif;
+      }
+      #cf-panel-bar .cf-tab{
+        display:flex; align-items:center; gap:6px;
+        padding:9px 14px; border-radius:999px; cursor:pointer;
+        background:transparent; border:1px solid #ffffff1f; color:#cfd3de;
+        font:inherit;
+      }
+      #cf-panel-bar .cf-tab:hover{border-color:#7c5cff; color:#fff}
+      #cf-panel-bar .cf-tab[aria-selected="true"]{background:#7c5cff; border-color:#7c5cff; color:#fff}
+      #cf-panel-back{
+        margin-left:auto; padding:9px 14px; border-radius:999px; cursor:pointer;
+        background:#1e212b; border:1px solid #7c5cff66; color:#e3dcff; font:inherit;
+      }
+      #cf-panel-back:hover{border-color:#7c5cff; color:#fff}
+      #cf-panel-body{position:relative; flex:1; min-height:0}
+      #cf-panel-body iframe{
+        position:absolute; inset:0; width:100%; height:100%;
+        border:0; background:#0e0f13;
+      }
+      #cf-panel-body iframe[hidden]{display:none}
+
+      /* Start screen: your videos, in place of the paste-a-link landing page.
+         Sits under the floating buttons and the armed banner. */
+      #cf-start{
+        position:fixed; inset:0; z-index:9990; overflow:auto;
+        background:radial-gradient(900px 500px at 20% 0%, #2a1d5533, transparent),
+                   radial-gradient(800px 500px at 100% 100%, #3a1d6a33, transparent), #0b0b10;
+        font:400 14px/1.45 Outfit,system-ui,sans-serif; color:#cfd3de;
+      }
+      #cf-start[hidden]{display:none}
+      #cf-start .in{max-width:1080px; margin:0 auto; padding:56px 16px 140px}
+      #cf-start h1{margin:0 0 4px; font-size:28px; color:#fff; letter-spacing:-.02em}
+      #cf-start .lead{margin:0 0 22px; color:#8b90a0}
+      #cf-start .bar{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:18px}
+      #cf-start .bar button{
+        padding:10px 16px; border-radius:999px; cursor:pointer;
+        background:#1e212b; border:1px solid #ffffff1f; color:#e6e8ef; font:600 13px/1 Outfit,system-ui,sans-serif;
+      }
+      #cf-start .bar button.main{background:#7c5cff; border-color:#7c5cff; color:#fff}
+      #cf-start .bar button:hover{border-color:#7c5cff}
+      #cf-start-status{color:#b9a8ff; font-size:13px}
+      #cf-start-list{display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:12px}
+      #cf-start .vid{
+        text-align:left; padding:14px; border-radius:14px; cursor:pointer;
+        background:#14161dcc; border:1px solid #ffffff14; color:#e6e8ef; font:inherit;
+        transition:.12s;
+      }
+      #cf-start .vid:hover{border-color:#7c5cff; background:#1b1e27}
+      #cf-start .vid.last{border-color:#7c5cff88}
+      #cf-start .vid b{display:block; color:#fff; font-weight:600; margin-bottom:4px;
+        overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+      #cf-start .vid span{display:block; color:#8b90a0; font-size:12px}
+      #cf-start .vid em{font-style:normal; color:#9ad7b4}
+      #cf-start .vid i{font-style:normal; color:#ffb020}
+      #cf-start .note{color:#8b90a0; font-size:13px}
     </style>
+
+    <div id="cf-start" hidden>
+      <div class="in">
+        <h1>Your videos</h1>
+        <p class="lead">Pick a video to open it in the editor. Transcribed ones open instantly.</p>
+        <div class="bar">
+          <button type="button" class="main" id="cf-start-upload">&#11014; Upload a new video</button>
+          <button type="button" id="cf-start-refresh">Refresh</button>
+          <span id="cf-start-status"></span>
+        </div>
+        <div id="cf-start-list"><p class="note">Loading&hellip;</p></div>
+      </div>
+    </div>
+
+    <div id="cf-panel" hidden role="dialog" aria-label="ClipForge tools">
+      <div id="cf-panel-bar">
+        <button type="button" class="cf-tab" data-tool="studio" aria-selected="false">&#9889; Studio</button>
+        <button type="button" class="cf-tab" data-tool="movie" aria-selected="false">&#127916; Movie Shorts</button>
+        <button type="button" class="cf-tab" data-tool="storage" aria-selected="false">&#128190; Storage</button>
+        <button type="button" id="cf-panel-back" title="Back to the editor (Esc)">&larr; Back to editor</button>
+      </div>
+      <div id="cf-panel-body"></div>
+    </div>
 
     <!-- Download all: when clips are on screen, link to a ZIP of them plus a tracking
          CSV. The clip folder id is read from the clips' own URLs (/clips/<id>/<n>.mp4),
@@ -118,7 +273,7 @@
          built. Nothing about the app's own request is changed otherwise, and
          with no armed clips this is a no-op passthrough. -->
     <div id="cf-armed">
-      <span><b id="cf-armed-n">0</b> Studio clips armed <span class="sub" id="cf-armed-src"></span></span>
+      <span><b id="cf-armed-n">0</b> clip(s) armed <span class="sub" id="cf-armed-src"></span></span>
       <button type="button" id="cf-armed-clear">Clear</button>
     </div>
     <script>
@@ -140,8 +295,8 @@
         el.style.display = "flex";
         document.getElementById("cf-armed-n").textContent = a.windows.length;
         document.getElementById("cf-armed-src").textContent =
-          "· video " + String(a.source_id || "").slice(0, 8) +
-          "… · style it, then Generate renders these";
+          "· " + (a.label || ("video " + String(a.source_id || "").slice(0, 8) + "…")) +
+          " · style it, then Generate renders these";
       }
 
       document.getElementById("cf-armed-clear").onclick = function () {
@@ -229,20 +384,61 @@
         }, 250);
       }
 
-      function adopt(armed) {
-        var tries = 0;
+      function findButton(re) {
+        var buttons = document.querySelectorAll("button");
+        for (var i = 0; i < buttons.length; i++) {
+          if (re.test(buttons[i].textContent || "")) return buttons[i];
+        }
+        return null;
+      }
+
+      // Load a video already in downloads/ into the editor, from wherever the
+      // app is: the source screen, or the editor showing another video.
+      // `done` runs once the editor has it (or the attempt is given up).
+      var loading = 0;   // timestamp of the last load we started, for the start screen
+      function loadSource(sourceId, done) {
+        loading = Date.now();
+        try { localStorage.setItem("cf-last-video", sourceId); } catch (_) {}
+        adopt({ source_id: sourceId, windows: [] }, done || function () {});
+      }
+
+      function adopt(armed, done) {
+        done = done || function () { syncClipCount(armed.windows.length); };
+        loading = Date.now();
+        var tries = 0, backed = false;
         var timer = setInterval(function () {
           tries++;
           var input = findLinkInput();
+          // Already in the editor with another video? The link box lives on
+          // the source screen, so step back there first (once).
+          if (!input && !backed) {
+            var back = findButton(/back to source/i);
+            if (back) { backed = true; back.click(); return; }
+          }
           var button = input ? findGenerateButton() : null;
           if (input && button) {
             clearInterval(timer);
             try {
               setReactValue(input, MARKER + armed.source_id);
-              setTimeout(function () {
-                button.click();
-                syncClipCount(armed.windows.length);
-              }, 120);
+              // Straight after "Back to source" the screen is still settling
+              // and a click can be lost. Keep the link filled in and click
+              // again while the link box is still on screen (the editor has
+              // none), at most a few times.
+              var clicks = 0, ticks = 0;
+              setTimeout(function press() {
+                var box = findLinkInput(), b = findGenerateButton();
+                if (!box || !b || clicks >= 5 || ++ticks > 20) {
+                  done();
+                  return;
+                }
+                if (box.value !== MARKER + armed.source_id) {
+                  setReactValue(box, MARKER + armed.source_id);
+                } else if (!b.disabled) {
+                  clicks++;
+                  b.click();
+                }
+                setTimeout(press, 700);
+              }, 150);
             } catch (err) {
               console.warn("Studio auto-load failed; load the video yourself.", err);
             }
@@ -260,11 +456,18 @@
         // Answer the prefetch for a Studio video locally — the file is already
         // in downloads/, so there is nothing to fetch.
         if (method === "POST" && url.indexOf("/api/prefetch") !== -1 && init && init.body) {
-          var armedNow = read();
           try {
             var pf = JSON.parse(init.body);
-            if (armedNow && String(pf.video_url || "").indexOf(MARKER) === 0) {
-              return Promise.resolve(fakeDone(armedNow.source_id));
+            var marked = String(pf.video_url || "");
+            if (marked.indexOf(MARKER) === 0) {
+              // The id is in the marker itself, so this works for a video
+              // picked from "Your videos" as well as one sent from Studio.
+              var picked = marked.slice(MARKER.length);
+              if (/^[0-9a-f]{32}$/.test(picked)) {
+                return Promise.resolve(fakeDone(picked));
+              }
+              var armedNow = read();
+              if (armedNow) return Promise.resolve(fakeDone(armedNow.source_id));
             }
           } catch (_) { /* not ours — fall through */ }
         }
@@ -305,10 +508,294 @@
             punchline_words: w.punchline_words,
           };
         });
-        body.flash_outro = true;
+        // Studio wants the flash outro; a movie short is already finished
+        // and says so by sending flash_outro: false.
+        body.flash_outro = armed.flash_outro !== false;
         var next = Object.assign({}, init, { body: JSON.stringify(body) });
         return nativeFetch(input, next);
       };
+
+      // --- "Your videos" ------------------------------------------------
+      // Loading a film again means uploading gigabytes a second time, when the
+      // file is already in downloads/. Picking one here feeds the app the same
+      // marker URL Studio uses, so it adopts the video without moving bytes.
+      (function () {
+        var btn = document.getElementById("cf-recent-btn");
+        var panel = document.getElementById("cf-recent");
+        var list = document.getElementById("cf-recent-list");
+        if (!btn || !panel || !list) return;
+        var loaded = false;
+
+        function size(bytes) {
+          var gb = bytes / 1073741824;
+          return gb >= 1 ? gb.toFixed(1) + " GB" : Math.round(bytes / 1048576) + " MB";
+        }
+
+        function load() {
+          fetch("/api/videos").then(function (r) { return r.json(); }).then(function (d) {
+            var videos = (d && d.videos) || [];
+            if (!videos.length) {
+              list.innerHTML = '<p class="cf-note">Nothing uploaded yet. ' +
+                'Upload a video and it will be listed here next time.</p>';
+              return;
+            }
+            list.innerHTML = "";
+            videos.forEach(function (v) {
+              var row = document.createElement("button");
+              row.type = "button";
+              row.className = "cf-row";
+              var name = document.createElement("b");
+              name.textContent = v.label || ("Video " + v.source_id.slice(0, 8));
+              var meta = document.createElement("span");
+              meta.textContent = new Date(v.modified * 1000).toLocaleString() +
+                " · " + size(v.bytes) + " · ";
+              var tr = document.createElement(v.has_transcript ? "em" : "span");
+              tr.textContent = v.has_transcript ? "transcribed" : "not transcribed yet";
+              meta.appendChild(tr);
+              row.appendChild(name);
+              row.appendChild(meta);
+              row.onclick = function () { pick(v); };
+              list.appendChild(row);
+            });
+          }).catch(function () {
+            list.innerHTML = '<p class="cf-note">Could not read your videos.</p>';
+          });
+        }
+
+        function pick(video) {
+          panel.hidden = true;
+          loadSource(video.source_id);
+        }
+
+        btn.onclick = function () {
+          panel.hidden = !panel.hidden;
+          if (!panel.hidden) { load(); loaded = true; }
+        };
+        document.getElementById("cf-recent-close").onclick = function () {
+          panel.hidden = true;
+        };
+        // Reopening after an upload should show the new file.
+        window.addEventListener("focus", function () {
+          if (loaded && !panel.hidden) load();
+        });
+      })();
+
+      // --- In-app panel: Studio / Movie Shorts / Storage --------------------
+      // Each tool is its own page, loaded once into an iframe that is only
+      // hidden, never destroyed, when you go back to the editor. So a Movie
+      // Shorts list, a Studio transcript or a running render is still there
+      // when you come back. Handing clips over is a postMessage from the tool,
+      // not a page change.
+      (function () {
+        var panel = document.getElementById("cf-panel");
+        var body = document.getElementById("cf-panel-body");
+        if (!panel || !body) return;
+        var URLS = { studio: "/studio", movie: "/movie", storage: "/storage" };
+        var frames = {};
+
+        function show(tool) {
+          if (!URLS[tool]) tool = "studio";
+          if (!frames[tool]) {
+            var f = document.createElement("iframe");
+            f.src = URLS[tool];
+            f.title = tool;
+            body.appendChild(f);
+            frames[tool] = f;
+          }
+          Object.keys(frames).forEach(function (k) { frames[k].hidden = k !== tool; });
+          panel.querySelectorAll(".cf-tab").forEach(function (t) {
+            t.setAttribute("aria-selected", t.getAttribute("data-tool") === tool ? "true" : "false");
+          });
+          panel.hidden = false;
+          document.documentElement.style.overflow = "hidden";
+          try { history.replaceState(null, "", "#" + tool); } catch (_) {}
+        }
+
+        function hide() {
+          panel.hidden = true;
+          document.documentElement.style.overflow = "";
+          try { history.replaceState(null, "", location.pathname + location.search); } catch (_) {}
+        }
+
+        panel.querySelectorAll(".cf-tab").forEach(function (t) {
+          t.onclick = function () { show(t.getAttribute("data-tool")); };
+        });
+        document.getElementById("cf-panel-back").onclick = hide;
+        document.addEventListener("keydown", function (e) {
+          if (e.key === "Escape" && !panel.hidden) hide();
+        });
+
+        // The floating links open the panel; their href still works as a
+        // normal link (middle-click, new tab).
+        [["cf-studio-link", "studio"], ["cf-movie-link", "movie"], ["cf-storage-link", "storage"]]
+          .forEach(function (pair) {
+            var a = document.getElementById(pair[0]);
+            if (!a) return;
+            a.addEventListener("click", function (e) {
+              if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return;
+              e.preventDefault();
+              show(pair[1]);
+            });
+          });
+
+        // One tool asks for another: Movie Shorts' "Edit all" opens Studio's
+        // batch editor on that batch. The message waits for Studio to load.
+        window.addEventListener("message", function (e) {
+          if (e.origin !== location.origin || !e.data || e.data.type !== "cf-open") return;
+          if (!URLS[e.data.tool]) return;
+          var fresh = !frames[e.data.tool];
+          show(e.data.tool);
+          if (!e.data.edit_all) return;
+          var f = frames[e.data.tool];
+          var send = function () {
+            f.contentWindow.postMessage({ type: "cf-edit-all", clip_id: e.data.edit_all }, location.origin);
+          };
+          if (fresh) f.addEventListener("load", send, { once: true });
+          else send();
+        });
+
+        // A tool armed clips and wants them in the editor now.
+        window.addEventListener("message", function (e) {
+          if (e.origin !== location.origin) return;
+          if (!e.data || e.data.type !== "cf-armed") return;
+          hide();
+          paint();
+          var armed = read();
+          if (!armed) return;
+          if (armed.adopt) {
+            armed.adopt = false;
+            try { localStorage.setItem(KEY, JSON.stringify(armed)); } catch (_) {}
+            adopt(armed);
+          } else {
+            syncClipCount(armed.windows.length);
+          }
+        });
+
+        // /#studio, /#movie, /#storage open straight into that tool.
+        var start = (location.hash || "").slice(1);
+        if (URLS[start]) show(start);
+      })();
+
+      // --- Start screen: straight to the editor --------------------------
+      // The app's own first screen asks for a YouTube link. Everything here is
+      // worked on from videos already on disk, so that screen is covered by a
+      // list of them, and the last video you worked on reopens by itself when
+      // its transcript is ready (so opening it costs nothing). The landing page
+      // is still underneath: loading a video is done through it, as before.
+      (function () {
+        var screen = document.getElementById("cf-start");
+        var list = document.getElementById("cf-start-list");
+        var status = document.getElementById("cf-start-status");
+        if (!screen || !list) return;
+        var LAST = "cf-last-video";
+        var videos = null, uploading = false;
+
+        function last() {
+          try { return localStorage.getItem(LAST) || ""; } catch (_) { return ""; }
+        }
+        function size(bytes) {
+          var gb = bytes / 1073741824;
+          return gb >= 1 ? gb.toFixed(1) + " GB" : Math.round(bytes / 1048576) + " MB";
+        }
+        function say(text) { status.textContent = text || ""; }
+
+        function open(v) {
+          say("Opening " + (v.label || "video") + "…");
+          loadSource(v.source_id);
+        }
+
+        function render() {
+          list.innerHTML = "";
+          if (!videos.length) {
+            list.innerHTML = '<p class="note">No videos yet. Upload one to get started.</p>';
+            return;
+          }
+          var lastId = last();
+          videos.forEach(function (v) {
+            var row = document.createElement("button");
+            row.type = "button";
+            row.className = "vid" + (v.source_id === lastId ? " last" : "");
+            var name = document.createElement("b");
+            name.textContent = v.label || ("Video " + v.source_id.slice(0, 8));
+            var meta = document.createElement("span");
+            meta.textContent = new Date(v.modified * 1000).toLocaleString() + " · " + size(v.bytes);
+            var tr = document.createElement("span");
+            var tag = document.createElement(v.has_transcript ? "em" : "i");
+            tag.textContent = v.has_transcript
+              ? (v.source_id === lastId ? "last opened · transcribed" : "transcribed")
+              : "not transcribed yet — opening runs Whisper first";
+            tr.appendChild(tag);
+            row.appendChild(name);
+            row.appendChild(meta);
+            row.appendChild(tr);
+            row.onclick = function () { open(v); };
+            list.appendChild(row);
+          });
+        }
+
+        function load(then) {
+          fetch("/api/videos").then(function (r) { return r.json(); }).then(function (d) {
+            videos = (d && d.videos) || [];
+            render();
+            if (then) then();
+          }).catch(function () {
+            list.innerHTML = '<p class="note">Could not read your videos.</p>';
+          });
+        }
+
+        // Upload goes through the app's own Upload control, so its progress
+        // and transcription work as before; we only show a line about it.
+        document.getElementById("cf-start-upload").onclick = function () {
+          var file = document.querySelector('input[type="file"]');
+          if (!file) { say("The page is still loading — try again in a moment."); return; }
+          file.addEventListener("change", function onPick() {
+            file.removeEventListener("change", onPick);
+            if (file.files && file.files.length) {
+              uploading = true;
+              say("Uploading " + file.files[0].name + "… it opens in the editor when done.");
+            }
+          });
+          file.click();
+        };
+        document.getElementById("cf-start-refresh").onclick = function () { load(); };
+
+        // Show the list whenever the app is on its landing page (it has the
+        // link box and no video yet); hide it as soon as the editor is up.
+        function onLanding() { return !!findLinkInput() && !document.querySelector("video"); }
+        var wasLanding = null;
+        setInterval(function () {
+          var landing = onLanding();
+          screen.hidden = !landing;
+          if (landing && wasLanding === false) {    // came back via "Back to source"
+            uploading = false;
+            say("");
+            load();
+          }
+          if (!landing) {
+            uploading = false;
+            // Remember what is open, uploads included, for next time.
+            var v = document.querySelector("video");
+            var m = v && /\/([0-9a-f]{32})(?:\/|\.|$)/.exec(v.currentSrc || v.src || "");
+            if (m) { try { localStorage.setItem(LAST, m[1]); } catch (_) {} }
+          } else if (!uploading && loading && Date.now() - loading > 20000 && status.textContent) {
+            say("That video did not open. Try again, or pick another.");
+            loading = 0;
+          }
+          wasLanding = landing;
+        }, 400);
+
+        // First visit of this page load: reopen the last video if it is ready.
+        // Skipped when Studio or Movie Shorts just sent something (that wins).
+        var armed = read();
+        var handoff = armed && armed.adopt;
+        load(function () {
+          if (handoff || !onLanding()) return;
+          var id = last();
+          var v = null;
+          for (var i = 0; i < videos.length; i++) if (videos[i].source_id === id) v = videos[i];
+          if (v && v.has_transcript) open(v);
+        });
+      })();
 
       // Run last, once everything above is defined. Studio sets `adopt` when it
       // sends you here, so the video loads itself; the flag is consumed once, so

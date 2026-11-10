@@ -67,6 +67,16 @@ def _zip_name(clip: dict, used: set) -> str:
     return candidate
 
 
+def _hashtags(description) -> str | None:
+    """``#a #b`` in a description as ``a, b`` — Movie Shorts writes its tags there."""
+    tags = re.findall(r"#(\w+)", str(description or ""))
+    seen: list = []
+    for tag in tags:
+        if tag.lower() not in (t.lower() for t in seen):
+            seen.append(tag)
+    return ", ".join(seen) or None
+
+
 def _row(entry: dict, clip: dict, name: str) -> dict:
     recipe = clip.get("recipe") or {}
     settings = entry.get("settings") or {}
@@ -82,7 +92,7 @@ def _row(entry: dict, clip: dict, name: str) -> dict:
         "title": clip.get("title"),
         "hook": clip.get("hook"),
         "description": clip.get("description"),
-        "tags": clip.get("tags"),
+        "tags": clip.get("tags") or _hashtags(clip.get("description")),
         "score": clip.get("score"),
         "start_s": start,
         "end_s": end,

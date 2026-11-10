@@ -31,7 +31,7 @@ from . import (
 from .clipper import ClipOptions, generate_clip, target_size
 from .models import (
     AspectRatio, ClipChanges, ClipGenerationError, FitMode, GenerateRequest,
-    InvalidVideoURLError,
+    BadInputError,
 )
 from .paths import WORK_DIR
 
@@ -142,7 +142,7 @@ def render_clip(
     _tag_speakers(clip_words, transcript, window.get("speaker_segments") or {})
 
     plan = None
-    if fit in (FitMode.AUTO, FitMode.TRACK, FitMode.BLUR):
+    if fit in (FitMode.AUTO, FitMode.TRACK, FitMode.BLUR, FitMode.LETTERBOX):
         if status:
             status("Looking at the footage to frame it...")
         plan = reframe.plan_reframe(
@@ -168,7 +168,7 @@ def render_clip(
     if recipe.get("music_track"):
         try:
             music_path = music.resolve_track(recipe["music_track"])
-        except InvalidVideoURLError:
+        except BadInputError:
             logger.warning("music track %r not found; rendering without it.", recipe["music_track"])
 
     opts = ClipOptions(
@@ -250,7 +250,7 @@ def apply_changes(recipe: dict, changes: ClipChanges, transcript: dict) -> dict:
             if track:
                 try:
                     music.resolve_track(track)
-                except InvalidVideoURLError as exc:
+                except BadInputError as exc:
                     raise RestyleError(400, str(exc)) from exc
             new["music_track"] = track or None
         else:
@@ -295,7 +295,7 @@ def restyle_clip(clip_id: str, index: int, changes: ClipChanges) -> dict:
 
     try:
         source = uploads.resolve_upload(recipe["source_id"])
-    except InvalidVideoURLError as exc:
+    except BadInputError as exc:
         raise RestyleError(409, "The source video was deleted (Storage page), so this clip cannot be re-rendered.") from exc
     transcript = pretranscribe.load(recipe["source_id"], recipe.get("transcript_language"))
     if transcript is None:

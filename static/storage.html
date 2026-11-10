@@ -58,6 +58,8 @@
   .empty{color:var(--muted); font-size:13px; padding:10px 0}
   .note{background:#ffb02014; border:1px solid #ffb02033; border-left:3px solid var(--warn);
         border-radius:8px; padding:11px 13px; font-size:13px; color:#e3d3b4; margin-bottom:16px}
+  /* Inside the main app's panel the links home are the panel's own job. */
+  .embedded .navlinks{display:none}
 </style>
 </head>
 <body>
@@ -66,7 +68,7 @@
 <h1>Storage</h1>
 <div class="sub">
   Free up disk space after copying clips to your external drive.
-  &nbsp;·&nbsp; <a href="/">Main app</a> &nbsp;·&nbsp; <a href="/studio">Studio</a>
+  <span class="navlinks">&nbsp;·&nbsp; <a href="/">Main app</a> &nbsp;·&nbsp; <a href="/studio">Studio</a></span>
   &nbsp;·&nbsp; <a href="#" id="refresh">Refresh</a>
 </div>
 
@@ -145,6 +147,7 @@
 </div>
 
 <script>
+if (window.parent !== window) document.documentElement.classList.add("embedded");
 "use strict";
 const $ = (id) => document.getElementById(id);
 let report = null;
