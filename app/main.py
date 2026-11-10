@@ -36,7 +36,8 @@ from . import (
     sources, speech, storage, transcriber, uploads, verify,
 )
 from .models import (
-    ClipChanges, Device, GenerateRequest, BadInputError, TranscriptionError,
+    AspectRatio, ClipChanges, Device, FitMode, GenerateRequest, BadInputError,
+    TranscriptionError,
 )
 from .paths import (
     CLIPS_DIR, DEFAULT_CLIPS_DIR, FONTS_DIR, MUSIC_DIR, STATIC_DIR, WEB_DIST_DIR,
@@ -517,6 +518,13 @@ class MovieRenderRequest(BaseModel):
     raw: str
     language: Optional[str] = None
     caption_style: str = "alex_caps"
+    # Same framing choices as the rest of the app. Letterbox shows the whole
+    # frame, which also means it keeps any damaged edge the source has; the
+    # cropping modes remove it.
+    fit_mode: FitMode = FitMode.LETTERBOX
+    aspect_ratio: AspectRatio = AspectRatio.NINE_16
+    caption_scale: float = Field(default=1.0, ge=0.3, le=2.0)
+    caption_position: Optional[str] = None  # top | center | bottom
 
 
 @app.get("/api/movie/prompt")
@@ -624,7 +632,14 @@ def movie_render(req: MovieRenderRequest) -> dict:
     except BadInputError:
         raise HTTPException(status_code=404, detail="The source video is missing.")
 
-    job = movie_jobs.start(req.source_id, resolved, source, req.caption_style)
+    overrides = {"font_scale": req.caption_scale, "position": req.caption_position}
+    job = movie_jobs.start(
+        req.source_id, resolved, source,
+        caption_style=req.caption_style,
+        caption_overrides={k: v for k, v in overrides.items() if v is not None},
+        fit_mode=req.fit_mode.value,
+        aspect_ratio=req.aspect_ratio.value,
+    )
     return {"status": "ok", "job_id": job.id, "clips": len(resolved["clips"])}
 
 

@@ -27,9 +27,12 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from . import captions, effects, kokoro_tts
-from .clipper import _rel_for_filter
-from .models import ClipGenerationError
+from . import captions, effects, kokoro_tts, reframe
+from .clipper import (
+    _SQUARE_INNER, _SQUARE_RADIUS, _rel_for_filter, ensure_rounded_mask,
+    target_size,
+)
+from .models import AspectRatio, ClipGenerationError, FitMode
 from .paths import FONTS_DIR
 
 logger = logging.getLogger(__name__)
@@ -55,16 +58,46 @@ _ENCODE = [
 ]
 
 
-def _letterbox_chain() -> str:
-    """Fit the picture inside the frame on black — the movie-recap layout.
+def _fit_chain(
+    fit: FitMode, w: int, h: int, u: str = "", plan=None,
+    work_dir: Optional[Path] = None,
+) -> str:
+    """How one slice of film is fitted into a ``w x h`` frame, as a filter chain.
 
-    Mirrors ``clipper._reframe_stage``'s letterbox branch, but as a plain filter
-    chain (no labels) so it can sit inside a per-input stage here.
+    Mirrors what ``clipper`` does for a whole clip, slice by slice, so Movie
+    Shorts offers the same framing choices as the rest of the app rather than
+    one hard-coded layout.
+
+    ``square`` is not here: it needs the rounded mask as a second input, so it
+    is built in :func:`_square_stage`.
     """
+    if fit == FitMode.LETTERBOX:
+        # Fit the whole picture on black. Crops nothing — which also means any
+        # damaged edge in the source survives into the short.
+        return (
+            f"scale={w}:{h}:force_original_aspect_ratio=decrease"
+            ":force_divisible_by=2,"
+            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black"
+        )
+    if fit == FitMode.BLUR or (plan is not None and plan.mode == "blur"):
+        small_w, small_h = max(2, w // 8), max(2, h // 8)
+        return (
+            f"split[bgs{u}][fgs{u}];"
+            f"[bgs{u}]scale={w}:{h}:force_original_aspect_ratio=increase,"
+            f"crop={w}:{h},scale={small_w}:{small_h},boxblur=4:2,"
+            f"scale={w}:{h},eq=brightness=-0.06[bg{u}];"
+            f"[fgs{u}]scale={w}:-2[fg{u}];"
+            f"[bg{u}][fg{u}]overlay=(W-w)/2:(H-h)/2"
+        )
+    if plan is not None and plan.mode == "track" and plan.commands_path is not None:
+        script = _rel_for_filter(plan.commands_path, work_dir or Path("."))
+        return (
+            f"scale={plan.scaled_w}:{h},sendcmd=f={script},"
+            f"crop={w}:{h}:{plan.x0}:0"
+        )
+    # crop / centre: scale to cover, then take the middle.
     return (
-        f"scale={CANVAS_W}:{CANVAS_H}:force_original_aspect_ratio=decrease"
-        ":force_divisible_by=2,"
-        f"pad={CANVAS_W}:{CANVAS_H}:(ow-iw)/2:(oh-ih)/2:black"
+        f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
     )
 
 
@@ -83,16 +116,65 @@ def _look_chain(grade: str, sharpen: bool) -> str:
     return ",".join(parts)
 
 
-def _video_stage(in_index: int, out_label: str, grade: str, sharpen: bool) -> str:
-    """One input's video -> a canvas-sized, graded, constant-fps stream."""
-    chain = [_letterbox_chain()]
+def _video_stage(
+    in_index: int,
+    out_label: str,
+    grade: str,
+    sharpen: bool,
+    fit: FitMode = FitMode.LETTERBOX,
+    w: int = CANVAS_W,
+    h: int = CANVAS_H,
+    plan=None,
+    work_dir: Optional[Path] = None,
+    mask_label: Optional[str] = None,
+) -> str:
+    """One input's video -> a frame-sized, framed, graded, constant-fps stream.
+
+    ``out_label`` doubles as the unique suffix for any internal labels, so two
+    slices in the same graph never collide.
+    """
     look = _look_chain(grade, sharpen)
-    if look:
-        chain.append(look)
-    chain.append(f"fps={FPS}")
-    chain.append("setsar=1")
-    chain.append("format=yuv420p")
-    return f"[{in_index}:v]" + ",".join(chain) + f"[{out_label}]"
+    tail = [f"fps={FPS}", "setsar=1", "format=yuv420p"]
+
+    if fit == FitMode.SQUARE and mask_label:
+        return _square_stage(in_index, out_label, look, w, h, mask_label, tail)
+
+    fit_chain = _fit_chain(fit, w, h, out_label, plan, work_dir)
+    suffix = "," + ",".join(([look] if look else []) + tail)
+
+    # A fit chain is usually one linear chain, but blur is several ';'-joined
+    # stages. Either way the FIRST stage reads the input and the LAST one gets
+    # the look, the tail filters and the output label.
+    stages = fit_chain.split(";")
+    stages[0] = f"[{in_index}:v]{stages[0]}"
+    stages[-1] = f"{stages[-1]}{suffix}[{out_label}]"
+    return ";".join(stages)
+
+
+def _square_stage(
+    in_index: int, out_label: str, look: str, w: int, h: int,
+    mask_label: str, tail: List[str],
+) -> str:
+    """The rounded 1:1 square centred on a black canvas, for one slice.
+
+    Same composition as ``clipper._build_square_filter_complex`` — the grade
+    goes on the SQUARE, not the canvas around it — but labelled per slice and
+    taking its mask from a split of the shared mask input.
+    """
+    s = _SQUARE_INNER
+    u = out_label
+    mx, my = (w - s) // 2, (h - s) // 2
+    square_chain = ",".join([f"scale={s}:{s}:force_original_aspect_ratio=increase",
+                             f"crop={s}:{s}"] + ([look] if look else []))
+    return ";".join([
+        f"[{in_index}:v]split[base{u}][fgi{u}]",
+        f"[base{u}]scale={w}:{h}:force_original_aspect_ratio=increase,"
+        f"crop={w}:{h},drawbox=0:0:iw:ih:black:t=fill[bg{u}]",
+        f"[fgi{u}]{square_chain},format=yuva420p[sq{u}]",
+        f"[{mask_label}]format=gray,scale={s}:{s}[mk{u}]",
+        f"[sq{u}][mk{u}]alphamerge[r{u}]",
+        f"[bg{u}][r{u}]overlay={mx}:{my}," + ",".join(tail) + f"[{out_label}]",
+    ])
 
 
 def _audio_stage(in_index: int, out_label: str, gain_db: float = 0.0) -> str:
@@ -190,11 +272,12 @@ def build_short(
     work_dir: Path,
     voice: str = "am_michael",
     speed: float = 1.15,
-    # A centre-anchored preset by default: in letterbox the picture sits in the
-    # middle of the frame, so a bottom-anchored caption would land on the black
-    # bar under it rather than on the footage.
+    # A centre-anchored preset by default: with the picture in the middle of
+    # the frame a bottom-anchored caption lands on the black bar under it.
     caption_style: str = "alex_caps",
     caption_overrides: Optional[dict] = None,
+    fit_mode: FitMode = FitMode.LETTERBOX,
+    aspect_ratio: AspectRatio = AspectRatio.NINE_16,
     status: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     """Render one resolved movie short. Returns a small report about it.
@@ -215,6 +298,13 @@ def build_short(
     grade = clip.get("grade_preset") or "teal_orange"
     sharpen = bool(clip.get("sharpen", True))
 
+    fit = FitMode(fit_mode)
+    width, height = target_size(AspectRatio(aspect_ratio), fit)
+    # Square composites the footage through a rounded mask, added as one extra
+    # looped input per slice (see ``frame_stage``).
+    mask_labels: List[str] = []
+    mask_path = ensure_rounded_mask(_SQUARE_INNER, _SQUARE_RADIUS) if fit == FitMode.SQUARE else None
+
     inputs: List[str] = []          # ffmpeg -i arguments, in order
     stages: List[str] = []          # filter_complex stages
     block_labels: List[Tuple[str, str]] = []   # (video label, audio label) per block
@@ -231,6 +321,35 @@ def build_short(
         next_input += 1
         return index
 
+    def frame_stage(index: int, label: str, start: float, length: float) -> str:
+        """The video stage for one slice, framed the way the user chose."""
+        plan = None
+        if fit in (FitMode.AUTO, FitMode.TRACK):
+            # Decided per slice, because a recap cuts between shots that want
+            # different framing — a wide establishing shot and a close-up.
+            plan = reframe.plan_reframe(
+                source, start, start + length, width, height,
+                fit.value, work_dir, f"{out_path.stem}_{label}",
+            )
+        mask_label = None
+        if fit == FitMode.SQUARE:
+            # Each slice gets its own mask input, bounded to that slice's
+            # length. Both halves matter: `concat` reads slices one after
+            # another, so any branch it has not reached yet must END on its
+            # own — an endless looped still (or a split of one) just buffers
+            # until the render stalls.
+            nonlocal next_input
+            inputs.extend([
+                "-loop", "1", "-t", f"{length:.3f}", "-i", str(mask_path.resolve()),
+            ])
+            mask_label = f"{next_input}:v"
+            next_input += 1
+            mask_labels.append(mask_label)
+        return _video_stage(
+            index, label, grade, sharpen, fit, width, height,
+            plan=plan, work_dir=work_dir, mask_label=mask_label,
+        )
+
     for position, block in enumerate(clip.get("timeline") or []):
         kind = block.get("type")
 
@@ -240,7 +359,7 @@ def build_short(
             length = max(0.05, end - start)
             index = add_slice(start, length)
             vlabel, alabel = f"bv{position}", f"ba{position}"
-            stages.append(_video_stage(index, vlabel, grade, sharpen))
+            stages.append(frame_stage(index, vlabel, start, length))
             if source_has_audio:
                 stages.append(_audio_stage(index, alabel))
             else:
@@ -273,7 +392,7 @@ def build_short(
                 index = add_slice(start, length)
                 vlabel = f"mv{position}_{micro_index}"
                 alabel = f"ma{position}_{micro_index}"
-                stages.append(_video_stage(index, vlabel, grade, sharpen))
+                stages.append(frame_stage(index, vlabel, start, length))
                 if source_has_audio:
                     stages.append(_audio_stage(index, alabel))
                 else:
@@ -343,11 +462,14 @@ def build_short(
         captions.build_ass(
             words=caption_words,
             style_preset=caption_style,
-            video_w=CANVAS_W,
-            video_h=CANVAS_H,
+            video_w=width,
+            video_h=height,
             out_path=ass_path,
             clip_start=0.0,
             overrides=caption_overrides,
+            # Square pulls the default caption margin up so captions sit under
+            # the square rather than off the bottom of the canvas.
+            fit_mode=fit.value,
         )
         stages.append(
             f"[{vout}]ass={_rel_for_filter(ass_path, work_dir)}:"

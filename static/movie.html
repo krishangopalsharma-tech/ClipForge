@@ -131,10 +131,41 @@
   <div class="step off" id="s5">
     <h2><span class="n">5</span> Render</h2>
     <div class="row">
+      <div><label>Framing</label><select id="fit">
+        <option value="letterbox">Letterbox — whole frame on black</option>
+        <option value="crop">Fill — crop to vertical</option>
+        <option value="auto">Auto — follow a face, else full picture</option>
+        <option value="track">Track a face</option>
+        <option value="blur">Full picture over a blur</option>
+        <option value="square">Rounded square</option>
+      </select></div>
+      <div><label>Size</label><select id="aspect">
+        <option value="9:16">9:16 vertical</option>
+        <option value="16:9">16:9 wide</option>
+      </select></div>
+    </div>
+    <p class="meta" id="fitNote">Letterbox shows the whole film frame, so a movie that
+      already has black bars baked in ends up small — and any damaged edge in the file
+      stays visible. Fill or Auto crop those away.</p>
+    <div class="row">
       <div><label>Narrator</label><select id="voice"><option>am_michael</option></select></div>
       <div><label>Captions</label><select id="capStyle">
         <option value="alex_caps">Alex caps (centred)</option>
       </select></div>
+      <div><label>Caption size</label><select id="capScale">
+        <option value="0.6">Small</option>
+        <option value="0.8">Medium</option>
+        <option value="1" selected>Preset default</option>
+        <option value="1.25">Large</option>
+      </select></div>
+      <div><label>Caption place</label><select id="capPos">
+        <option value="">Preset default</option>
+        <option value="center">Over the picture</option>
+        <option value="bottom">Bottom</option>
+        <option value="top">Top</option>
+      </select></div>
+    </div>
+    <div class="row" style="margin-top:10px">
       <div class="auto"><button id="render">Render shorts</button></div>
     </div>
     <div class="bar" id="b5" style="display:none"><i></i></div>
@@ -332,6 +363,10 @@ $("render").onclick = async () => {
       body: JSON.stringify({
         source_id: sourceId, raw: $("json").value,
         caption_style: $("capStyle").value,
+        fit_mode: $("fit").value,
+        aspect_ratio: $("aspect").value,
+        caption_scale: parseFloat($("capScale").value),
+        caption_position: $("capPos").value || null,
       }),
     });
     clearInterval(poll);

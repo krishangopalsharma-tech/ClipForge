@@ -69,13 +69,23 @@ def get_job(job_id: str) -> Optional[MovieJob]:
         return _JOBS.get(job_id)
 
 
-def start(source_id: str, plan: dict, source: Path, caption_style: str = "alex_caps") -> MovieJob:
+def start(
+    source_id: str,
+    plan: dict,
+    source: Path,
+    caption_style: str = "alex_caps",
+    caption_overrides: Optional[dict] = None,
+    fit_mode: str = "letterbox",
+    aspect_ratio: str = "9:16",
+) -> MovieJob:
     """Render every short in ``plan`` on a daemon thread."""
     job = MovieJob(source_id, plan, Path(source))
     with _JOBS_LOCK:
         _JOBS[job.id] = job
     threading.Thread(
-        target=_run, args=(job, caption_style), daemon=True
+        target=_run,
+        args=(job, caption_style, caption_overrides, fit_mode, aspect_ratio),
+        daemon=True,
     ).start()
     logger.info(
         "[%s] movie render started: source=%s clips=%d mode=%s",
@@ -84,8 +94,18 @@ def start(source_id: str, plan: dict, source: Path, caption_style: str = "alex_c
     return job
 
 
-def _run(job: MovieJob, caption_style: str) -> None:
+def _run(
+    job: MovieJob,
+    caption_style: str,
+    caption_overrides: Optional[dict],
+    fit_mode: str,
+    aspect_ratio: str,
+) -> None:
     from . import pretranscribe
+    from .models import AspectRatio, FitMode
+
+    fit = FitMode(fit_mode)
+    aspect = AspectRatio(aspect_ratio)
 
     try:
         transcript = pretranscribe.load(job.source_id)
@@ -128,6 +148,9 @@ def _run(job: MovieJob, caption_style: str) -> None:
                     voice=voice,
                     speed=speed,
                     caption_style=caption_style,
+                    caption_overrides=caption_overrides,
+                    fit_mode=fit,
+                    aspect_ratio=aspect,
                     status=status,
                 )
             except (ClipGenerationError, KokoroError) as exc:

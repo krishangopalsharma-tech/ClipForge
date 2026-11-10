@@ -226,6 +226,48 @@ class LookTests(unittest.TestCase):
         self.assertEqual(movie_renderer._look_chain("none", False), "")
 
 
+class FitModeTests(unittest.TestCase):
+    """Movie Shorts offers the same framing choices as the rest of the app."""
+
+    def _stage(self, fit, **kw):
+        return movie_renderer._video_stage(
+            3, "bv0", "teal_orange", True, fit, 1080, 1920, **kw)
+
+    def test_every_fit_reads_its_input_and_ends_at_its_label(self):
+        for fit in (FitMode.LETTERBOX, FitMode.CROP, FitMode.BLUR,
+                    FitMode.AUTO, FitMode.TRACK):
+            graph = self._stage(fit)
+            self.assertTrue(graph.startswith("[3:v]"), fit)
+            self.assertTrue(graph.endswith("[bv0]"), fit)
+
+    def test_cropping_modes_actually_crop(self):
+        for fit in (FitMode.CROP, FitMode.AUTO):
+            self.assertIn("crop=1080:1920", self._stage(fit), fit)
+
+    def test_letterbox_pads_instead_of_cropping(self):
+        graph = self._stage(FitMode.LETTERBOX)
+        self.assertIn("pad=1080:1920", graph)
+        self.assertNotIn("crop=1080:1920", graph)
+
+    def test_square_uses_the_shared_mask(self):
+        graph = self._stage(FitMode.SQUARE, mask_label="mkin0")
+        self.assertIn("[mkin0]", graph)
+        self.assertIn("alphamerge", graph)
+        self.assertTrue(graph.endswith("[bv0]"))
+
+    def test_two_slices_never_share_internal_labels(self):
+        import re
+        a = movie_renderer._video_stage(0, "bv0", "none", False, FitMode.BLUR, 1080, 1920)
+        b = movie_renderer._video_stage(1, "bv1", "none", False, FitMode.BLUR, 1080, 1920)
+        labels = lambda g: set(re.findall(r"\[([a-z][a-z0-9]*)\]", g))
+        self.assertEqual(labels(a) & labels(b), set())
+
+    def test_the_grade_lands_on_the_square_not_the_canvas(self):
+        graph = self._stage(FitMode.SQUARE, mask_label="mkin0")
+        square_branch = [s for s in graph.split(";") if "fgi" in s and "scale" in s]
+        self.assertTrue(any("colorbalance" in s or "eq=" in s for s in square_branch))
+
+
 class RouteTests(unittest.TestCase):
     """The app object is built without running its lifespan, so no model loads."""
 
@@ -285,6 +327,37 @@ class RouteTests(unittest.TestCase):
                                    json={"source_id": "a" * 32, "raw": raw})
         self.assertEqual(res.status_code, 503)
         self.assertIn("Kokoro", res.json()["detail"])
+
+    def test_render_accepts_framing_and_caption_options(self):
+        from app import pretranscribe, movie_jobs
+        raw = ('{"mode":"scene_edit","clips":[{"clip_id":1,"timeline":'
+               '[{"type":"dialogue","start_seg":2,"end_seg":4}]}]}')
+        seen = {}
+
+        def fake_start(source_id, plan, source, **kw):
+            seen.update(kw)
+            return mock.Mock(id="job1")
+
+        with mock.patch.object(pretranscribe, "load", return_value=_transcript()), \
+             mock.patch.object(movie_jobs, "start", side_effect=fake_start), \
+             mock.patch("app.uploads.resolve_upload", return_value=Path("x.mp4")):
+            res = self.client.post("/api/movie/render", json={
+                "source_id": "a" * 32, "raw": raw, "fit_mode": "square",
+                "aspect_ratio": "16:9", "caption_scale": 0.6,
+                "caption_position": "bottom",
+            })
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(seen["fit_mode"], "square")
+        self.assertEqual(seen["aspect_ratio"], "16:9")
+        self.assertEqual(seen["caption_overrides"]["font_scale"], 0.6)
+        self.assertEqual(seen["caption_overrides"]["position"], "bottom")
+
+    def test_render_rejects_an_unknown_fit_mode(self):
+        from app import pretranscribe
+        with mock.patch.object(pretranscribe, "load", return_value=_transcript()):
+            res = self.client.post("/api/movie/render", json={
+                "source_id": "a" * 32, "raw": "{}", "fit_mode": "origami"})
+        self.assertEqual(res.status_code, 422)
 
     def test_unknown_render_job_is_404(self):
         self.assertEqual(self.client.get("/api/movie/job/nope").status_code, 404)
