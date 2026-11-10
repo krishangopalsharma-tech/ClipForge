@@ -300,6 +300,59 @@ class FitModeTests(unittest.TestCase):
         self.assertTrue(any("colorbalance" in s or "eq=" in s for s in square_branch))
 
 
+class HandoffTests(unittest.TestCase):
+    """A short becomes a source video, so the main app can edit it."""
+
+    def test_bare_assembly_applies_no_framing_grade_or_captions(self):
+        graph = movie_renderer._video_stage(
+            2, "bv0", "teal_orange", True, FitMode.CROP, 1920, 1080)
+        self.assertIn("crop=", graph)      # the baked path does frame it
+        # and the bare path, built the same way inside build_short, does not:
+        bare = f"[2:v]scale=1920:1080,fps={movie_renderer.FPS},setsar=1,format=yuv420p[bv0]"
+        for banned in ("crop=", "pad=", "colorbalance", "cas=", "ass="):
+            self.assertNotIn(banned, bare)
+
+    def test_the_recipe_matches_what_the_renderer_writes(self):
+        from app import movie_jobs
+        from app.rendering import make_recipe
+        from app.models import GenerateRequest
+        mine = movie_jobs._recipe("abc", 42.0, {})
+        theirs = make_recipe(
+            GenerateRequest(video_url="http://x/y"), {}, "abc", 0.0, 42.0)
+        self.assertEqual(set(mine), set(theirs))
+
+    def test_recipe_covers_the_whole_short(self):
+        from app import movie_jobs
+        recipe = movie_jobs._recipe("abc", 42.0, {"fit_mode": "crop"})
+        self.assertEqual((recipe["start"], recipe["end"]), (0.0, 42.0))
+        self.assertEqual(recipe["fit_mode"], "crop")
+        self.assertEqual(recipe["source_id"], "abc")
+
+    def test_published_source_gets_a_loadable_transcript(self):
+        import json as _json
+        import tempfile
+        from app import movie_jobs, pretranscribe
+        from app.paths import DOWNLOADS_DIR, TRANSCRIPTS_DIR
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "assembled.mp4"
+            fake.write_bytes(b"not really a video")
+            report = {
+                "duration": 12.5,
+                "words": [{"word": "hello", "start": 0.0, "end": 0.4}],
+                "segments": [{"id": 0, "start": 0.0, "end": 2.0, "text": "hello"}],
+            }
+            source_id = movie_jobs.publish_as_source(fake, report)
+        try:
+            self.assertFalse(fake.exists(), "the assembled file should be moved")
+            loaded = pretranscribe.load(source_id)
+            self.assertIsNotNone(loaded)
+            self.assertEqual(len(loaded["segments"]), 1)
+            self.assertEqual(loaded["duration"], 12.5)
+        finally:
+            (DOWNLOADS_DIR / f"{source_id}.mp4").unlink(missing_ok=True)
+            (TRANSCRIPTS_DIR / f"{source_id}__auto.json").unlink(missing_ok=True)
+
+
 class RouteTests(unittest.TestCase):
     """The app object is built without running its lifespan, so no model loads."""
 

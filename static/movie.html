@@ -150,7 +150,11 @@
 
   <!-- 5 ---------------------------------------------------------------- -->
   <div class="step off" id="s5">
-    <h2><span class="n">5</span> Render</h2>
+    <h2><span class="n">5</span> Build</h2>
+    <p class="meta">These are starting points. Each short becomes a video in your
+      library and lands in the main app as an ordinary clip, so you can change the
+      framing, caption style, logo and music there and watch it update — rather
+      than guessing here and waiting for a render to find out.</p>
     <div class="row">
       <div><label>Framing</label><select id="fit">
         <option value="letterbox">Letterbox — whole frame on black</option>
@@ -187,7 +191,7 @@
       </select></div>
     </div>
     <div class="row" style="margin-top:10px">
-      <div class="auto"><button id="render">Render shorts</button></div>
+      <div class="auto"><button id="render">Build shorts</button></div>
     </div>
     <div class="bar" id="b5" style="display:none"><i></i></div>
     <div class="msg" id="m5"></div>
@@ -422,9 +426,18 @@ function showResults(s) {
        <div class="meta"><a href="${c.url}" download>Download</a></div>`;
     host.appendChild(div);
   });
-  if (s.status === "error") say("m5", s.error || "Render failed.", "err");
-  else say("m5", s.message + (s.failed.length ? ` — ${s.failed.join("; ")}` : ""),
-           s.failed.length ? "warn" : "ok");
+  if (s.status === "error") { say("m5", s.error || "Build failed.", "err"); return; }
+  say("m5", s.message + (s.failed.length ? ` — ${s.failed.join("; ")}` : ""),
+      s.failed.length ? "warn" : "ok");
+  if ((s.clips || []).length) {
+    const go = document.createElement("div");
+    go.className = "clip";
+    go.innerHTML = `<h3>Now style them</h3>
+      <div class="meta">Each short is in your clip list, where the framing,
+      caption style, logo and music can be changed and previewed.</div>
+      <div style="margin-top:9px"><a href="/" style="font-weight:600">Open the main app →</a></div>`;
+    host.prepend(go);
+  }
 }
 
 // Caption styles, filled from the backend so the list never drifts.

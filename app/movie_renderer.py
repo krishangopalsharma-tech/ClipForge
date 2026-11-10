@@ -278,6 +278,7 @@ def build_short(
     caption_overrides: Optional[dict] = None,
     fit_mode: FitMode = FitMode.LETTERBOX,
     aspect_ratio: AspectRatio = AspectRatio.NINE_16,
+    bake_look: bool = True,
     status: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     """Render one resolved movie short. Returns a small report about it.
@@ -285,6 +286,13 @@ def build_short(
     ``clip`` is a clip as :func:`app.movie.resolve_clip` returns it: every block
     already carries real times and the dialogue cuts are already snapped onto
     word boundaries.
+
+    With ``bake_look`` false this assembles the timeline ONLY — the slices and
+    the narration, at the source's own size, with no framing, grade, sharpening
+    or captions. That output is meant to become a source video in its own
+    right, so the rest of the app can frame, grade, caption, add a logo and add
+    music to it with everything visible before it renders. The report's
+    ``words`` are then the transcript of that new source.
     """
     source = Path(source)
     work_dir = Path(work_dir)
@@ -300,6 +308,13 @@ def build_short(
 
     fit = FitMode(fit_mode)
     width, height = target_size(AspectRatio(aspect_ratio), fit)
+    if not bake_look:
+        # Keep the film's own frame: nothing is decided here that the editor
+        # would then have to undo.
+        try:
+            width, height = reframe.probe_size(source)
+        except Exception:  # noqa: BLE001 - fall back to the canvas
+            logger.warning("Could not probe %s; assembling at %dx%d", source, width, height)
     # Square composites the footage through a rounded mask, added as one extra
     # looped input per slice (see ``frame_stage``).
     mask_labels: List[str] = []
@@ -309,6 +324,7 @@ def build_short(
     stages: List[str] = []          # filter_complex stages
     block_labels: List[Tuple[str, str]] = []   # (video label, audio label) per block
     caption_words: List[dict] = []
+    caption_segments: List[dict] = []
     offset = 0.0                    # where we are on the output timeline
     narration_used = 0
     next_input = 0
@@ -323,6 +339,11 @@ def build_short(
 
     def frame_stage(index: int, label: str, start: float, length: float) -> str:
         """The video stage for one slice, framed the way the user chose."""
+        if not bake_look:
+            return (
+                f"[{index}:v]scale={width}:{height},fps={FPS},setsar=1,"
+                f"format=yuv420p[{label}]"
+            )
         plan = None
         if fit in (FitMode.AUTO, FitMode.TRACK):
             # Decided per slice, because a recap cuts between shots that want
@@ -365,7 +386,14 @@ def build_short(
             else:
                 stages.append(_silent_audio_stage(alabel, length))
             block_labels.append((vlabel, alabel))
-            caption_words.extend(_words_in(all_words, start, end, offset))
+            said = _words_in(all_words, start, end, offset)
+            caption_words.extend(said)
+            caption_segments.append({
+                "id": len(caption_segments),
+                "start": offset,
+                "end": round(offset + length, 3),
+                "text": " ".join(w["word"] for w in said),
+            })
             offset = round(offset + length, 3)
 
         elif kind == "voiceover":
@@ -442,6 +470,12 @@ def build_short(
                     "start": round(word["start"] + offset, 3),
                     "end": round(word["end"] + offset, 3),
                 })
+            caption_segments.append({
+                "id": len(caption_segments),
+                "start": offset,
+                "end": round(offset + duration, 3),
+                "text": block["narration_text"],
+            })
             offset = round(offset + duration, 3)
 
     if not block_labels:
@@ -455,9 +489,10 @@ def build_short(
         stages.append(f"{pairs}concat=n={len(block_labels)}:v=1:a=1[cv][ca]")
         vout, aout = "cv", "ca"
 
-    # Captions over the finished picture.
+    # Captions over the finished picture — skipped when this is going to become
+    # a source video, which gets its words as a transcript instead.
     final_v = vout
-    if caption_words:
+    if caption_words and bake_look:
         ass_path = work_dir / f"{out_path.stem}.ass"
         captions.build_ass(
             words=caption_words,
@@ -508,7 +543,10 @@ def build_short(
         "duration": offset,
         "blocks": len(block_labels),
         "narration_blocks": narration_used,
-        "words": len(caption_words),
+        "word_count": len(caption_words),
+        "words": caption_words,
+        "segments": caption_segments,
+        "size": (width, height),
     }
 
 
