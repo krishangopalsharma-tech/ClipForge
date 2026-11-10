@@ -76,6 +76,26 @@ error deta hai; Studio mein apne chune hue clips phir bhi render ho jaate hain.
 Purane `hi`/`ur` transcripts `medium` ke hi cache mein rahenge — dobara
 transcribe karne ke liye storage page se transcript delete karein.
 
+**Reframe (Phase 3):** Studio ke Render step mein Fit ab *Auto* hai: har clip
+dekh kar tay hota hai ki ek aadmi ka chehra follow karna hai (`track`), ya poori
+picture blur background ke upar dikhani hai (`blur`: koi chehra nahi, slide,
+screen recording, ya group). 9:16 source ko chheda nahi jaata. Detector ek ~1 MB
+ka face model hai (UltraFace RFB-320) jo `onnxruntime` par CPU par chalta hai
+(5 frames/sec, 12 sec ka clip ~1 sec) — GPU Whisper aur ffmpeg ke liye khaali
+rehti hai. Model `models/face/version-RFB-320.onnx` mein hona chahiye; nayi
+install par:
+
+    python\python.exe -m app.reframe --download
+
+Model na ho to render fail nahi hota: Auto blur layout dikhata hai, Follow
+face centre crop, aur clip ke saath wajah likhi aati hai. Fit options: Auto,
+Follow the face, Full picture over blur, Centre crop, Rounded square. Main
+dashboard (`web/dist`) abhi sirf crop/square bhejta hai; API par
+`fit_mode` = `auto` / `track` / `blur` kaam karta hai. Thresholds
+(`MIN_FACE_FRACTION`, `GROUP_RATIO`, `DEAD_ZONE`, `MAX_SPEED`…) `app/reframe.py`
+ke upar hain. Studio ka purana "1:1" aspect aur "Pad" fit option (jo API ko
+kabhi valid nahi the) hata diye; square ab "Rounded square" fit hai.
+
 API: `GET /api/transcript/{source_id}` · `GET /api/clip-prompt` ·
 `POST /api/manual-windows` · `POST /api/generate` mein `manual_windows`.
 

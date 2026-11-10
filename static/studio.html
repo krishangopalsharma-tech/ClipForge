@@ -268,16 +268,17 @@
         <label>Aspect</label>
         <select id="aspect">
           <option value="9:16">9:16 vertical</option>
-          <option value="1:1">1:1 square</option>
           <option value="16:9">16:9 wide</option>
         </select>
       </div>
       <div>
         <label>Fit</label>
         <select id="fit">
-          <option value="crop">Crop</option>
-          <option value="pad">Pad</option>
-          <option value="blur">Blur bars</option>
+          <option value="auto" selected>Auto (follow the face, or blur)</option>
+          <option value="track">Follow the face</option>
+          <option value="blur">Full picture over blur</option>
+          <option value="crop">Centre crop</option>
+          <option value="square">Rounded square reel</option>
         </select>
       </div>
       <div>
@@ -800,6 +801,7 @@ function showClips(clips) {
       <div class="meta">
         <div class="t">${escapeHtml(c.title)}</div>
         <div class="mono" style="margin-bottom:6px;">${mmss(c.start)} &rarr; ${mmss(c.end)}</div>
+        ${c.reframe ? `<div class="mono" style="margin-bottom:6px;">Framing: ${escapeHtml(({track: "following the face", blur: "full picture over blur", center: "centre crop"})[c.reframe.mode] || c.reframe.mode)} &mdash; ${escapeHtml(c.reframe.reason)}</div>` : ""}
         <div style="display:flex; gap:10px; font-size:12px;">
           <a href="${c.url}" download style="color:var(--accent); text-decoration:none; font-weight:600;">📥 Video</a>
           ${c.subtitle_url ? `<a href="${c.subtitle_url}" download style="color:var(--muted); text-decoration:none;">📄 Subtitles (.ass)</a>` : ""}

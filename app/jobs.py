@@ -23,13 +23,14 @@ import uuid
 from typing import Dict, List, Optional
 
 from . import (
-    captions, downloader, flashes, history, manual, music, pretranscribe, selector,
-    speech, transcriber, uploads,
+    captions, downloader, flashes, history, manual, music, pretranscribe, reframe,
+    selector, speech, transcriber, uploads,
 )
 from .clipper import ClipOptions, generate_clip, target_size
 from .models import (
     LANGUAGE_NAMES,
     ClipGenerationError,
+    FitMode,
     GenerateRequest,
     InvalidVideoURLError,
     TranscriptionError,
@@ -406,6 +407,20 @@ def _run_pipeline(job: Job) -> None:
             punchline_words = win.get("punchline_words") or []
             characters = win.get("characters") or []
 
+            # Vertical output only: look at the footage and decide how to fit it
+            # (follow a face, or the whole picture over a blur). Never fails the clip.
+            plan = None
+            if req.fit_mode in (FitMode.AUTO, FitMode.TRACK, FitMode.BLUR):
+                job.set_stage(
+                    "rendering", index / total,
+                    f"Looking at clip {index + 1} of {total} to frame it...",
+                )
+                plan = reframe.plan_reframe(
+                    source_mp4, start, end, width, height,
+                    req.fit_mode.value, work_dir, f"{index}",
+                )
+                logger.info("[%s] clip %d reframe: %s (%s)", job.id, index, plan.mode, plan.reason)
+
             ass_path = work_dir / f"{index}.ass"
             captions.build_ass(
                 words=clip_words,
@@ -435,6 +450,7 @@ def _run_pipeline(job: Job) -> None:
                 music_duck=req.music_duck if req.music_duck is not None else 70.0,
                 music_start=req.music_start if req.music_start is not None else 0.0,
                 signature=req.signature.model_dump() if req.signature else None,
+                reframe=plan,
             )
 
             # Check if flash outro is enabled or requested
@@ -511,6 +527,8 @@ def _run_pipeline(job: Job) -> None:
             for key in ("hook", "description", "tags", "score", "picked_by"):
                 if win.get(key) not in (None, ""):
                     clip[key] = win[key]
+            if plan is not None:
+                clip["reframe"] = plan.summary()
             results.append(clip)
             job.add_clip(clip)  # stream the finished clip to the UI immediately
 

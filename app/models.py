@@ -55,10 +55,19 @@ class FitMode(str, Enum):
     - crop:   scale to *cover* the chosen aspect ratio, then center-crop (fills it).
     - square: force a 1:1 square frame and center-crop to fill it. The chosen
               aspect_ratio is IGNORED in this mode.
+    - auto:   look at each clip and decide: follow one person's face, or show the
+              whole picture over a blurred copy (no face / a group). A source
+              that is already vertical is left alone.
+    - track:  always follow a face (centre crop if none is found).
+    - blur:   always the full picture over a blurred copy of itself.
+    The last three apply to vertical (9:16) output; see ``app.reframe``.
     """
 
     CROP = "crop"
     SQUARE = "square"
+    AUTO = "auto"
+    TRACK = "track"
+    BLUR = "blur"
 
 
 class Device(str, Enum):

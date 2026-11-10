@@ -21,6 +21,7 @@ from typing import Optional
 
 from . import effects
 from .models import AspectRatio, ClipGenerationError, FitMode
+from .reframe import ReframePlan
 from .paths import CLIPS_DIR, FONTS_DIR, MASKS_DIR
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,7 @@ class ClipOptions:
     music_duck: float = 70.0           # 0-100, how hard music dips under the voice
     music_start: float = 0.0           # seconds into the track to start from (beat-aligned)
     signature: Optional[dict] = None   # burned-in watermark (see app.models.Signature)
+    reframe: Optional[ReframePlan] = None  # face-follow / blur layout (see app.reframe)
 
 
 def _rel_for_filter(target: Path, start_dir: Path) -> str:
@@ -183,12 +185,42 @@ def _finish_stages(in_label: str, vw: int, vh: int, opts: ClipOptions, work_dir:
     return cine_stages + sig_stages + [_caption_stage(sig_in, opts, work_dir)]
 
 
-def _build_crop_filter_complex(width: int, height: int, opts: ClipOptions, work_dir: Path) -> str:
-    """-filter_complex graph for crop mode: cover+crop, cinematic FX, then captions."""
-    stages = [
+def _reframe_stage(width: int, height: int, plan: Optional[ReframePlan], work_dir: Path) -> str:
+    """The first stage: source -> ``[v0]`` at the output size.
+
+    * track  scale to the output height, then a crop whose ``x`` is moved along
+             the face by a ``sendcmd`` script (ffmpeg's crop accepts ``x`` as a
+             runtime command).
+    * blur   the whole picture at full width centred over a blurred, darkened
+             copy that covers the frame. The copy is blurred at 1/8 size and
+             scaled back up, which is far cheaper than blurring 1080x1920.
+    * else   the plain cover + centre crop.
+    """
+    if plan is not None and plan.mode == "track" and plan.commands_path is not None:
+        script = _rel_for_filter(plan.commands_path, work_dir)
+        return (
+            f"[0:v]scale={plan.scaled_w}:{height},sendcmd=f={script},"
+            f"crop={width}:{height}:{plan.x0}:0,setsar=1[v0]"
+        )
+    if plan is not None and plan.mode == "blur":
+        small_w, small_h = max(2, width // 8), max(2, height // 8)
+        return (
+            "[0:v]split[bgs][fgs];"
+            f"[bgs]scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},scale={small_w}:{small_h},boxblur=4:2,"
+            f"scale={width}:{height},eq=brightness=-0.06[bg];"
+            f"[fgs]scale={width}:-2[fg];"
+            "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[v0]"
+        )
+    return (
         f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
         f"crop={width}:{height}[v0]"
-    ]
+    )
+
+
+def _build_crop_filter_complex(width: int, height: int, opts: ClipOptions, work_dir: Path) -> str:
+    """-filter_complex graph for crop mode: reframe, cinematic FX, then captions."""
+    stages = [_reframe_stage(width, height, opts.reframe, work_dir)]
     stages += _finish_stages("v0", width, height, opts, work_dir)
     return ";".join(stages)
 
