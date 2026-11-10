@@ -111,6 +111,16 @@ Saath mein ek purana bug theek kiya: `/clips/<id>/<n>.mp4` galat folder mein
 dhoondta tha aur `WORK_DIR` na hone se crash karta tha, is wajah se clip preview/
 download hota hi nahi tha.
 
+**Same video dobara (Phase 5):** Studio source load karte hi check karta hai ki
+ye video pehle cut ho chuka hai ya nahi, aur warning dikhata hai (render dabane
+par ek baar poochta hai). Chaar signal: same file (upload ka id file ke bytes ka
+hash hai), same YouTube id (kisi bhi link shape se), same file name (case/
+punctuation/spacing ignore; "(HD)" ya "1080p" ignore *nahi* hote, warna galat
+warning aati), aur same size + length. History se hi jawab aata hai (alag index
+nahi), sirf salah deta hai, kabhi block nahi karta, aur fail ho to "koi
+duplicate nahi" maana jaata hai. API: `POST /api/source/check` aur
+`/api/generate` ke jawab mein `duplicates`.
+
 Studio ka purana "1:1" aspect aur "Pad" fit option (jo API ko
 kabhi valid nahi the) hata diye; square ab "Rounded square" fit hai.
 

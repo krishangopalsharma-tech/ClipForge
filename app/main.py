@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 
 from . import (
     captions, fonts, history, jobs, manual, mood, music, overlays, prefetch,
-    pretranscribe, profiles, rendering, speech, storage, transcriber, uploads,
+    pretranscribe, profiles, rendering, sources, speech, storage, transcriber, uploads,
 )
 from .models import (
     ClipChanges, Device, GenerateRequest, InvalidVideoURLError, TranscriptionError,
@@ -684,10 +684,41 @@ def generate(req: GenerateRequest) -> dict:
     client subscribes to ``/api/progress/{job_id}`` for live progress and the
     final clips.
     """
+    # Advisory: has this video been cut before? Never blocks the job.
+    duplicates = sources.check(
+        source_id=req.upload_id, video_url=req.video_url, filename=req.upload_name,
+    )
     job = jobs.create_job(req)
     jobs.start_job(job)
     logger.info("[%s] job accepted", job.id)
-    return {"job_id": job.id}
+    return {"job_id": job.id, "duplicates": duplicates}
+
+
+class SourceCheckRequest(BaseModel):
+    """Body for POST /api/source/check."""
+
+    source_id: Optional[str] = Field(
+        default=None, description="An uploaded video already on disk (its size and "
+        "duration are read from the file).")
+    video_url: Optional[str] = None
+    filename: Optional[str] = Field(default=None, description="The file's name, for the title match.")
+    size: Optional[int] = Field(default=None, ge=0, description="Bytes, if the file is not on disk yet.")
+    duration: Optional[float] = Field(default=None, ge=0, description="Seconds, if known.")
+
+
+@app.post("/api/source/check")
+def source_check(req: SourceCheckRequest) -> dict:
+    """Has this source been cut before? Advisory: the answer never blocks a job.
+
+    Says which signal matched (same file, same YouTube id, same title, same size
+    and duration) so the caller can word the warning. The file itself is never
+    sent: a name and a byte size are enough.
+    """
+    duplicates = sources.check(
+        source_id=req.source_id, video_url=req.video_url, filename=req.filename,
+        size=req.size, duration=req.duration,
+    )
+    return {"duplicates": duplicates}
 
 
 @app.get("/api/music-suggest/{source_id}")

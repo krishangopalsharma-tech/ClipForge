@@ -142,6 +142,7 @@
     <input type="file" id="srtFile" accept=".srt" hidden>
     <div class="bar" id="upBar" hidden><i></i></div>
     <div class="status" id="upStatus"></div>
+    <div class="status warn" id="dupStatus"></div>
     <div class="status ok" id="srtStatus"></div>
 
     <div class="row" style="margin-top:14px">
@@ -415,6 +416,34 @@ function adoptSource(id, note) {
   setStep("s1", true, true);
   setStep("s2", true, false);
   probeTranscript();
+  checkDuplicate();
+}
+
+/* Has this video been cut before? Advisory: it warns, and asks once before a
+   re-render, but never blocks. The file is not sent, only its id and name. */
+const DUP_WHY = {
+  same_file: "the same file",
+  youtube: "the same YouTube video",
+  title: "a file with the same name",
+  size_duration: "a file of the same size and length",
+};
+async function checkDuplicate() {
+  state.duplicates = [];
+  say("dupStatus", "");
+  try {
+    const res = await jsonOrThrow(await fetch("/api/source/check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_id: state.sourceId, filename: state.filename || null }),
+    }));
+    state.duplicates = res.duplicates || [];
+    if (!state.duplicates.length) return;
+    const d = state.duplicates[0];
+    say("dupStatus",
+        "⚠ Already cut: " + (DUP_WHY[d.signals[0]] || "the same video") + ", on " +
+        (d.created || "").slice(0, 10) + " (" + d.clip_count + " clips). " +
+        "Rendering again repeats that work. The earlier clips are in your clips history.", "warn");
+  } catch (_) { /* advisory only */ }
 }
 
 $("drop").onclick = () => $("file").click();
@@ -474,6 +503,7 @@ function upload(file) {
       return;
     }
     bar("upBar", 1);
+    state.filename = file.name;
     adoptSource(
       data.upload_id,
       data.reused
@@ -756,6 +786,12 @@ function escapeHtml(s) {
 
 $("render").onclick = async () => {
   if (!state.windows || !state.windows.length) return;
+  if (state.duplicates && state.duplicates.length) {
+    const d = state.duplicates[0];
+    if (!confirm("This video was already cut on " + (d.created || "").slice(0, 10) + " (" +
+                 d.clip_count + " clips). Render it again anyway?")) return;
+    state.duplicates = [];   // asked once; do not ask again for this source
+  }
   $("render").disabled = true;
   $("clips").innerHTML = "";
   say("rnStatus", "Starting…");
