@@ -166,7 +166,55 @@
         border:0; background:#0e0f13;
       }
       #cf-panel-body iframe[hidden]{display:none}
+
+      /* Start screen: your videos, in place of the paste-a-link landing page.
+         Sits under the floating buttons and the armed banner. */
+      #cf-start{
+        position:fixed; inset:0; z-index:9990; overflow:auto;
+        background:radial-gradient(900px 500px at 20% 0%, #2a1d5533, transparent),
+                   radial-gradient(800px 500px at 100% 100%, #3a1d6a33, transparent), #0b0b10;
+        font:400 14px/1.45 Outfit,system-ui,sans-serif; color:#cfd3de;
+      }
+      #cf-start[hidden]{display:none}
+      #cf-start .in{max-width:1080px; margin:0 auto; padding:56px 16px 140px}
+      #cf-start h1{margin:0 0 4px; font-size:28px; color:#fff; letter-spacing:-.02em}
+      #cf-start .lead{margin:0 0 22px; color:#8b90a0}
+      #cf-start .bar{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:18px}
+      #cf-start .bar button{
+        padding:10px 16px; border-radius:999px; cursor:pointer;
+        background:#1e212b; border:1px solid #ffffff1f; color:#e6e8ef; font:600 13px/1 Outfit,system-ui,sans-serif;
+      }
+      #cf-start .bar button.main{background:#7c5cff; border-color:#7c5cff; color:#fff}
+      #cf-start .bar button:hover{border-color:#7c5cff}
+      #cf-start-status{color:#b9a8ff; font-size:13px}
+      #cf-start-list{display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:12px}
+      #cf-start .vid{
+        text-align:left; padding:14px; border-radius:14px; cursor:pointer;
+        background:#14161dcc; border:1px solid #ffffff14; color:#e6e8ef; font:inherit;
+        transition:.12s;
+      }
+      #cf-start .vid:hover{border-color:#7c5cff; background:#1b1e27}
+      #cf-start .vid.last{border-color:#7c5cff88}
+      #cf-start .vid b{display:block; color:#fff; font-weight:600; margin-bottom:4px;
+        overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+      #cf-start .vid span{display:block; color:#8b90a0; font-size:12px}
+      #cf-start .vid em{font-style:normal; color:#9ad7b4}
+      #cf-start .vid i{font-style:normal; color:#ffb020}
+      #cf-start .note{color:#8b90a0; font-size:13px}
     </style>
+
+    <div id="cf-start" hidden>
+      <div class="in">
+        <h1>Your videos</h1>
+        <p class="lead">Pick a video to open it in the editor. Transcribed ones open instantly.</p>
+        <div class="bar">
+          <button type="button" class="main" id="cf-start-upload">&#11014; Upload a new video</button>
+          <button type="button" id="cf-start-refresh">Refresh</button>
+          <span id="cf-start-status"></span>
+        </div>
+        <div id="cf-start-list"><p class="note">Loading&hellip;</p></div>
+      </div>
+    </div>
 
     <div id="cf-panel" hidden role="dialog" aria-label="ClipForge tools">
       <div id="cf-panel-bar">
@@ -344,7 +392,19 @@
         return null;
       }
 
-      function adopt(armed) {
+      // Load a video already in downloads/ into the editor, from wherever the
+      // app is: the source screen, or the editor showing another video.
+      // `done` runs once the editor has it (or the attempt is given up).
+      var loading = 0;   // timestamp of the last load we started, for the start screen
+      function loadSource(sourceId, done) {
+        loading = Date.now();
+        try { localStorage.setItem("cf-last-video", sourceId); } catch (_) {}
+        adopt({ source_id: sourceId, windows: [] }, done || function () {});
+      }
+
+      function adopt(armed, done) {
+        done = done || function () { syncClipCount(armed.windows.length); };
+        loading = Date.now();
         var tries = 0, backed = false;
         var timer = setInterval(function () {
           tries++;
@@ -368,7 +428,7 @@
               setTimeout(function press() {
                 var box = findLinkInput(), b = findGenerateButton();
                 if (!box || !b || clicks >= 5 || ++ticks > 20) {
-                  syncClipCount(armed.windows.length);
+                  done();
                   return;
                 }
                 if (box.value !== MARKER + armed.source_id) {
@@ -503,15 +563,8 @@
         }
 
         function pick(video) {
-          var input = findLinkInput();
-          var button = findGenerateButton();
-          if (!input || !button) {
-            alert("The page is still loading — try again in a moment.");
-            return;
-          }
           panel.hidden = true;
-          setReactValue(input, MARKER + video.source_id);
-          setTimeout(function () { button.click(); }, 120);
+          loadSource(video.source_id);
         }
 
         btn.onclick = function () {
@@ -605,6 +658,127 @@
         // /#studio, /#movie, /#storage open straight into that tool.
         var start = (location.hash || "").slice(1);
         if (URLS[start]) show(start);
+      })();
+
+      // --- Start screen: straight to the editor --------------------------
+      // The app's own first screen asks for a YouTube link. Everything here is
+      // worked on from videos already on disk, so that screen is covered by a
+      // list of them, and the last video you worked on reopens by itself when
+      // its transcript is ready (so opening it costs nothing). The landing page
+      // is still underneath: loading a video is done through it, as before.
+      (function () {
+        var screen = document.getElementById("cf-start");
+        var list = document.getElementById("cf-start-list");
+        var status = document.getElementById("cf-start-status");
+        if (!screen || !list) return;
+        var LAST = "cf-last-video";
+        var videos = null, uploading = false;
+
+        function last() {
+          try { return localStorage.getItem(LAST) || ""; } catch (_) { return ""; }
+        }
+        function size(bytes) {
+          var gb = bytes / 1073741824;
+          return gb >= 1 ? gb.toFixed(1) + " GB" : Math.round(bytes / 1048576) + " MB";
+        }
+        function say(text) { status.textContent = text || ""; }
+
+        function open(v) {
+          say("Opening " + (v.label || "video") + "…");
+          loadSource(v.source_id);
+        }
+
+        function render() {
+          list.innerHTML = "";
+          if (!videos.length) {
+            list.innerHTML = '<p class="note">No videos yet. Upload one to get started.</p>';
+            return;
+          }
+          var lastId = last();
+          videos.forEach(function (v) {
+            var row = document.createElement("button");
+            row.type = "button";
+            row.className = "vid" + (v.source_id === lastId ? " last" : "");
+            var name = document.createElement("b");
+            name.textContent = v.label || ("Video " + v.source_id.slice(0, 8));
+            var meta = document.createElement("span");
+            meta.textContent = new Date(v.modified * 1000).toLocaleString() + " · " + size(v.bytes);
+            var tr = document.createElement("span");
+            var tag = document.createElement(v.has_transcript ? "em" : "i");
+            tag.textContent = v.has_transcript
+              ? (v.source_id === lastId ? "last opened · transcribed" : "transcribed")
+              : "not transcribed yet — opening runs Whisper first";
+            tr.appendChild(tag);
+            row.appendChild(name);
+            row.appendChild(meta);
+            row.appendChild(tr);
+            row.onclick = function () { open(v); };
+            list.appendChild(row);
+          });
+        }
+
+        function load(then) {
+          fetch("/api/videos").then(function (r) { return r.json(); }).then(function (d) {
+            videos = (d && d.videos) || [];
+            render();
+            if (then) then();
+          }).catch(function () {
+            list.innerHTML = '<p class="note">Could not read your videos.</p>';
+          });
+        }
+
+        // Upload goes through the app's own Upload control, so its progress
+        // and transcription work as before; we only show a line about it.
+        document.getElementById("cf-start-upload").onclick = function () {
+          var file = document.querySelector('input[type="file"]');
+          if (!file) { say("The page is still loading — try again in a moment."); return; }
+          file.addEventListener("change", function onPick() {
+            file.removeEventListener("change", onPick);
+            if (file.files && file.files.length) {
+              uploading = true;
+              say("Uploading " + file.files[0].name + "… it opens in the editor when done.");
+            }
+          });
+          file.click();
+        };
+        document.getElementById("cf-start-refresh").onclick = function () { load(); };
+
+        // Show the list whenever the app is on its landing page (it has the
+        // link box and no video yet); hide it as soon as the editor is up.
+        function onLanding() { return !!findLinkInput() && !document.querySelector("video"); }
+        var wasLanding = null;
+        setInterval(function () {
+          var landing = onLanding();
+          screen.hidden = !landing;
+          if (landing && wasLanding === false) {    // came back via "Back to source"
+            uploading = false;
+            say("");
+            load();
+          }
+          if (!landing) {
+            uploading = false;
+            // Remember what is open, uploads included, for next time.
+            var v = document.querySelector("video");
+            var m = v && /\/([0-9a-f]{32})(?:\/|\.|$)/.exec(v.currentSrc || v.src || "");
+            if (m) { try { localStorage.setItem(LAST, m[1]); } catch (_) {} }
+          } else if (!uploading && loading && Date.now() - loading > 20000 && status.textContent) {
+            say("That video did not open. Try again, or pick another.");
+            loading = 0;
+          }
+          wasLanding = landing;
+        }, 400);
+
+        // First visit of this page load: reopen the last video if it is ready.
+        // Skipped when Studio or Movie Shorts just sent something (that wins).
+        var armed = read();
+        var handoff = armed && armed.adopt;
+        load(function () {
+          if (handoff || !onLanding()) return;
+          var id = last();
+          var v = null;
+          for (var i = 0; i < videos.length; i++) if (videos[i].source_id === id) v = videos[i];
+          if (v && v.has_transcript) open(v);
+        });
       })();
 
       // Run last, once everything above is defined. Studio sets `adopt` when it

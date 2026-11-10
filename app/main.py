@@ -607,6 +607,12 @@ def movie_videos() -> dict:
             sid = entry.get("source_id")
             if sid and sid not in labels and entry.get("source"):
                 labels[sid] = entry["source"]
+            # A Movie Shorts short is its own source video; name it after the
+            # short instead of leaving a bare id.
+            for clip in entry.get("clips") or []:
+                csid = (clip.get("recipe") or {}).get("source_id")
+                if csid and csid != sid and csid not in labels and clip.get("title"):
+                    labels[csid] = "Short: " + clip["title"]
     except Exception:  # noqa: BLE001 - a broken history must not hide the videos
         logger.exception("Could not read history for video labels")
 
