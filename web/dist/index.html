@@ -132,7 +132,51 @@
         overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
       #cf-recent .cf-row span{color:#8b90a0; font-size:12px}
       #cf-recent .cf-row em{color:#9ad7b4; font-style:normal}
+
+      /* In-app panel: Studio, Movie Shorts and Storage open over the editor
+         instead of replacing it, and stay loaded while hidden. */
+      #cf-panel{
+        position:fixed; inset:0; z-index:10002;
+        display:flex; flex-direction:column;
+        background:#0e0f13;
+      }
+      #cf-panel[hidden]{display:none}
+      #cf-panel-bar{
+        display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+        padding:10px 16px; border-bottom:1px solid #ffffff14;
+        background:#12131a;
+        font:600 13px/1 Outfit,system-ui,sans-serif;
+      }
+      #cf-panel-bar .cf-tab{
+        display:flex; align-items:center; gap:6px;
+        padding:9px 14px; border-radius:999px; cursor:pointer;
+        background:transparent; border:1px solid #ffffff1f; color:#cfd3de;
+        font:inherit;
+      }
+      #cf-panel-bar .cf-tab:hover{border-color:#7c5cff; color:#fff}
+      #cf-panel-bar .cf-tab[aria-selected="true"]{background:#7c5cff; border-color:#7c5cff; color:#fff}
+      #cf-panel-back{
+        margin-left:auto; padding:9px 14px; border-radius:999px; cursor:pointer;
+        background:#1e212b; border:1px solid #7c5cff66; color:#e3dcff; font:inherit;
+      }
+      #cf-panel-back:hover{border-color:#7c5cff; color:#fff}
+      #cf-panel-body{position:relative; flex:1; min-height:0}
+      #cf-panel-body iframe{
+        position:absolute; inset:0; width:100%; height:100%;
+        border:0; background:#0e0f13;
+      }
+      #cf-panel-body iframe[hidden]{display:none}
     </style>
+
+    <div id="cf-panel" hidden role="dialog" aria-label="ClipForge tools">
+      <div id="cf-panel-bar">
+        <button type="button" class="cf-tab" data-tool="studio" aria-selected="false">&#9889; Studio</button>
+        <button type="button" class="cf-tab" data-tool="movie" aria-selected="false">&#127916; Movie Shorts</button>
+        <button type="button" class="cf-tab" data-tool="storage" aria-selected="false">&#128190; Storage</button>
+        <button type="button" id="cf-panel-back" title="Back to the editor (Esc)">&larr; Back to editor</button>
+      </div>
+      <div id="cf-panel-body"></div>
+    </div>
 
     <!-- Download all: when clips are on screen, link to a ZIP of them plus a tracking
          CSV. The clip folder id is read from the clips' own URLs (/clips/<id>/<n>.mp4),
@@ -292,20 +336,49 @@
         }, 250);
       }
 
+      function findButton(re) {
+        var buttons = document.querySelectorAll("button");
+        for (var i = 0; i < buttons.length; i++) {
+          if (re.test(buttons[i].textContent || "")) return buttons[i];
+        }
+        return null;
+      }
+
       function adopt(armed) {
-        var tries = 0;
+        var tries = 0, backed = false;
         var timer = setInterval(function () {
           tries++;
           var input = findLinkInput();
+          // Already in the editor with another video? The link box lives on
+          // the source screen, so step back there first (once).
+          if (!input && !backed) {
+            var back = findButton(/back to source/i);
+            if (back) { backed = true; back.click(); return; }
+          }
           var button = input ? findGenerateButton() : null;
           if (input && button) {
             clearInterval(timer);
             try {
               setReactValue(input, MARKER + armed.source_id);
-              setTimeout(function () {
-                button.click();
-                syncClipCount(armed.windows.length);
-              }, 120);
+              // Straight after "Back to source" the screen is still settling
+              // and a click can be lost. Keep the link filled in and click
+              // again while the link box is still on screen (the editor has
+              // none), at most a few times.
+              var clicks = 0, ticks = 0;
+              setTimeout(function press() {
+                var box = findLinkInput(), b = findGenerateButton();
+                if (!box || !b || clicks >= 5 || ++ticks > 20) {
+                  syncClipCount(armed.windows.length);
+                  return;
+                }
+                if (box.value !== MARKER + armed.source_id) {
+                  setReactValue(box, MARKER + armed.source_id);
+                } else if (!b.disabled) {
+                  clicks++;
+                  b.click();
+                }
+                setTimeout(press, 700);
+              }, 150);
             } catch (err) {
               console.warn("Studio auto-load failed; load the video yourself.", err);
             }
@@ -452,6 +525,86 @@
         window.addEventListener("focus", function () {
           if (loaded && !panel.hidden) load();
         });
+      })();
+
+      // --- In-app panel: Studio / Movie Shorts / Storage --------------------
+      // Each tool is its own page, loaded once into an iframe that is only
+      // hidden, never destroyed, when you go back to the editor. So a Movie
+      // Shorts list, a Studio transcript or a running render is still there
+      // when you come back. Handing clips over is a postMessage from the tool,
+      // not a page change.
+      (function () {
+        var panel = document.getElementById("cf-panel");
+        var body = document.getElementById("cf-panel-body");
+        if (!panel || !body) return;
+        var URLS = { studio: "/studio", movie: "/movie", storage: "/storage" };
+        var frames = {};
+
+        function show(tool) {
+          if (!URLS[tool]) tool = "studio";
+          if (!frames[tool]) {
+            var f = document.createElement("iframe");
+            f.src = URLS[tool];
+            f.title = tool;
+            body.appendChild(f);
+            frames[tool] = f;
+          }
+          Object.keys(frames).forEach(function (k) { frames[k].hidden = k !== tool; });
+          panel.querySelectorAll(".cf-tab").forEach(function (t) {
+            t.setAttribute("aria-selected", t.getAttribute("data-tool") === tool ? "true" : "false");
+          });
+          panel.hidden = false;
+          document.documentElement.style.overflow = "hidden";
+          try { history.replaceState(null, "", "#" + tool); } catch (_) {}
+        }
+
+        function hide() {
+          panel.hidden = true;
+          document.documentElement.style.overflow = "";
+          try { history.replaceState(null, "", location.pathname + location.search); } catch (_) {}
+        }
+
+        panel.querySelectorAll(".cf-tab").forEach(function (t) {
+          t.onclick = function () { show(t.getAttribute("data-tool")); };
+        });
+        document.getElementById("cf-panel-back").onclick = hide;
+        document.addEventListener("keydown", function (e) {
+          if (e.key === "Escape" && !panel.hidden) hide();
+        });
+
+        // The floating links open the panel; their href still works as a
+        // normal link (middle-click, new tab).
+        [["cf-studio-link", "studio"], ["cf-movie-link", "movie"], ["cf-storage-link", "storage"]]
+          .forEach(function (pair) {
+            var a = document.getElementById(pair[0]);
+            if (!a) return;
+            a.addEventListener("click", function (e) {
+              if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return;
+              e.preventDefault();
+              show(pair[1]);
+            });
+          });
+
+        // A tool armed clips and wants them in the editor now.
+        window.addEventListener("message", function (e) {
+          if (e.origin !== location.origin) return;
+          if (!e.data || e.data.type !== "cf-armed") return;
+          hide();
+          paint();
+          var armed = read();
+          if (!armed) return;
+          if (armed.adopt) {
+            armed.adopt = false;
+            try { localStorage.setItem(KEY, JSON.stringify(armed)); } catch (_) {}
+            adopt(armed);
+          } else {
+            syncClipCount(armed.windows.length);
+          }
+        });
+
+        // /#studio, /#movie, /#storage open straight into that tool.
+        var start = (location.hash || "").slice(1);
+        if (URLS[start]) show(start);
       })();
 
       // Run last, once everything above is defined. Studio sets `adopt` when it

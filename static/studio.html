@@ -18,6 +18,9 @@
   }
   .wrap{max-width:960px; margin:0 auto; padding:32px 20px 96px}
   header{margin-bottom:28px}
+  /* Inside the main app's panel the links home are the panel's own job. */
+  .embedded .navlinks{display:none}
+  .embedded .wrap{padding-top:18px}
   h1{margin:0 0 6px; font-size:26px; letter-spacing:-.02em}
   .sub{color:var(--muted); font-size:14px}
   .sub a{color:var(--accent); text-decoration:none}
@@ -127,9 +130,9 @@
   <h1>ClipForge Studio</h1>
   <div class="sub">
     Transcribe locally &rarr; let Claude or Gemini pick the moments &rarr; render here.
-    &nbsp;·&nbsp; <a href="/">Back to the main app</a>
+    <span class="navlinks">&nbsp;·&nbsp; <a href="/">Back to the main app</a>
     &nbsp;·&nbsp; <a href="/movie">Movie Shorts</a>
-    &nbsp;·&nbsp; <a href="/storage">Storage</a>
+    &nbsp;·&nbsp; <a href="/storage">Storage</a></span>
   </div>
 </header>
 
@@ -843,6 +846,9 @@ $("check").onclick = async () => {
    preview. Rather than rebuild those here, we park the chosen clips where its
    page can pick them up (see the bridge script in web/dist/index.html). */
 const ARMED_KEY = "cf-armed-clips";
+// Running inside the main app's Studio/Movie panel (see web/dist/index.html)?
+const EMBEDDED = window.parent !== window;
+if (EMBEDDED) document.documentElement.classList.add("embedded");
 
 function paintArmed() {
   let armed = null;
@@ -864,6 +870,13 @@ function armClips(adopt) {
 $("useMain").onclick = () => {
   if (!state.windows || !state.windows.length) return;
   armClips(true);   // main app loads this video by itself on arrival
+  if (EMBEDDED) {
+    // The editor is the page around us: it closes this panel and loads the
+    // video. Studio stays alive behind it, transcript and clip list intact.
+    say("hoStatus", "Sent to the editor.", "ok");
+    window.parent.postMessage({ type: "cf-armed" }, window.location.origin);
+    return;
+  }
   say("hoStatus", "Armed. Opening the main app…", "ok");
   window.location.href = "/";
 };
@@ -1261,8 +1274,10 @@ async function loadEditList() {
         if (!c.recipe || c.exists === false) continue;
         const key = e.clip_id + ":" + c.index;
         edit.clips[key] = { clipId: e.clip_id, clip: c };
+        // History entries carry no url; the clip route is derived from the ids.
+        const src = c.url || `/clips/${e.clip_id}/${c.index}.mp4`;
         cards.push(`<div class="clip clipcard" data-key="${key}">
-          <video src="${c.url}" controls preload="metadata"></video>
+          <video src="${src}" controls preload="metadata"></video>
           <div class="meta"><div class="t">${escapeHtml(c.title)}</div>
             <div class="mono">${mmss(c.recipe.start)} &rarr; ${mmss(c.recipe.end)} of the source</div></div>
           <div class="edit"><button class="ghost" data-act="open">Edit</button></div></div>`);

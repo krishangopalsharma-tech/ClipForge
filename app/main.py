@@ -712,6 +712,46 @@ def movie_job(job_id: str) -> dict:
     return job.snapshot()
 
 
+@app.get("/api/movie/recent")
+def movie_recent(limit: int = 5) -> dict:
+    """The latest Movie Shorts batches, newest first, read from history.
+
+    A render job lives only in memory, so leaving the page (or restarting the
+    server) used to lose the list of finished shorts and their "style it"
+    buttons. History already records every short with the recipe that holds
+    its own source id, which is all the hand-off needs.
+    """
+    batches = []
+    for entry in history.list_entries():
+        if not (entry.get("settings") or {}).get("movie_shorts"):
+            continue
+        clip_id = entry.get("clip_id", "")
+        clips = []
+        for c in entry.get("clips", []):
+            recipe = c.get("recipe") or {}
+            index = c.get("index", 0)
+            clips.append({
+                "index": index,
+                "title": c.get("title") or f"Short {index + 1}",
+                "hook_banner": c.get("hook"),
+                "description": c.get("description"),
+                "duration": float(c.get("end") or 0.0),
+                "source_id": recipe.get("source_id"),
+                "url": f"/clips/{clip_id}/{index}.mp4",
+                "exists": bool(c.get("exists")),
+            })
+        batches.append({
+            "clip_id": clip_id,
+            "created": entry.get("created"),
+            "source": entry.get("source"),
+            "film_source_id": entry.get("source_id"),
+            "clips": clips,
+        })
+        if len(batches) >= max(1, min(limit, 50)):
+            break
+    return {"batches": batches}
+
+
 @app.get("/movie")
 def movie_page() -> FileResponse:
     """The Movie Shorts page."""

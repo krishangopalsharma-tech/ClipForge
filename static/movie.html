@@ -58,13 +58,20 @@
   video{width:100%;max-width:260px;border-radius:9px;margin-top:9px;background:#000}
   code{background:var(--panel-2);padding:1px 5px;border-radius:4px;font-size:12.5px}
   a{color:var(--accent)}
+  /* Inside the main app's panel the page has no need for its own way home. */
+  .embedded .navlinks{display:none}
+  .embedded .wrap{padding-top:18px}
+  .sent{display:inline-block;margin-left:8px;font-size:12px;color:var(--ok)}
+  .batch{margin-top:14px}
+  .batch > .meta{margin-bottom:8px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Movie Shorts</h1>
   <p class="sub">Cut a film into vertical shorts — narrated with Kokoro, or straight from the
-    original dialogue. <a href="/studio">Studio</a> · <a href="/">Dashboard</a></p>
+    original dialogue.<span class="navlinks"> <a href="/studio">Studio</a> · <a href="/">Dashboard</a></span></p>
 
   <!-- 1 ---------------------------------------------------------------- -->
   <div class="step" id="s1">
@@ -205,6 +212,16 @@
     <div class="bar" id="b5" style="display:none"><i></i></div>
     <div class="msg" id="m5"></div>
     <div id="results"></div>
+  </div>
+
+  <!-- Every short you have made, so leaving this page loses nothing. -->
+  <div class="step" id="recent">
+    <h2><span class="n">&#9733;</span> Your shorts
+      <button class="ghost" id="recentRefresh" style="margin-left:auto;padding:5px 11px;font-size:12px">Refresh</button></h2>
+    <div style="color:var(--muted);font-size:13px">Your last Movie Shorts batches.
+      Send any short to the editor; this list stays here, so you can come back for the next one.</div>
+    <div class="msg" id="mR"></div>
+    <div id="recentList"></div>
   </div>
 </div>
 
@@ -440,43 +457,87 @@ $("render").onclick = async () => {
         caption_position: $("capPos").value || null,
       }),
     });
+    try { localStorage.setItem(LAST_JOB_KEY, d.job_id); } catch (_) {}
+    watchJob(d.job_id);
+  } catch (err) { say("m5", err.message, "err"); }
+};
+
+// Follow a render until it ends. Also used on load, so a render still running
+// when you left the page picks up where it is.
+function watchJob(jobId) {
+    $("b5").style.display = "block";
     clearInterval(poll);
     poll = setInterval(async () => {
       try {
-        const s = await api(`/api/movie/job/${d.job_id}`);
+        const s = await api(`/api/movie/job/${jobId}`);
         $("b5").firstElementChild.style.width = Math.round((s.progress || 0) * 100) + "%";
         say("m5", s.message || "Working…");
         if (s.status === "done" || s.status === "error") {
           clearInterval(poll);
+          try { localStorage.removeItem(LAST_JOB_KEY); } catch (_) {}
           showResults(s);
         }
-      } catch (err) { clearInterval(poll); say("m5", err.message, "err"); }
+      } catch (err) {
+        clearInterval(poll);
+        try { localStorage.removeItem(LAST_JOB_KEY); } catch (_) {}
+        say("m5", err.message, "err");
+      }
     }, 1500);
-  } catch (err) { say("m5", err.message, "err"); }
-};
+}
+
+// Running inside the main app's Studio/Movie panel (see web/dist/index.html)?
+const EMBEDDED = window.parent !== window;
+if (EMBEDDED) document.documentElement.classList.add("embedded");
+
+const LAST_JOB_KEY = "cf-movie-last-job";
+const SENT_KEY = "cf-movie-sent";
+function sentSet() {
+  try { return new Set(JSON.parse(localStorage.getItem(SENT_KEY) || "[]")); }
+  catch (_) { return new Set(); }
+}
+function markSent(sourceId) {
+  const s = sentSet();
+  s.add(sourceId);
+  try { localStorage.setItem(SENT_KEY, JSON.stringify([...s].slice(-300))); } catch (_) {}
+}
+
+// One short as a card: preview, download, and the button that sends it to the
+// editor. Used for a fresh render and for the "Your shorts" list alike.
+function clipCard(c) {
+  const div = document.createElement("div");
+  div.className = "clip";
+  const bits = [Math.round(c.duration) + "s"];
+  if (c.blocks) bits.push(c.blocks + " blocks");
+  if (c.narration_blocks) bits.push(c.narration_blocks + " narrated");
+  const missing = c.exists === false;
+  div.innerHTML =
+    `<h3>${esc(c.title)}</h3>
+     <div class="meta">${bits.join(" · ")}</div>`
+    + (missing
+      ? `<div class="meta" style="color:var(--warn)">The rendered file is gone (deleted in Storage?), but the short can still be styled again.</div>`
+      : `<video src="${c.url}" controls preload="metadata"></video>
+         <div class="meta"><a href="${c.url}" download>Download</a></div>`);
+  if (c.source_id) {
+    const style = document.createElement("button");
+    style.className = "ghost";
+    style.style.marginTop = "9px";
+    style.textContent = EMBEDDED ? "Edit in the editor →" : "Style this one in the main app →";
+    style.onclick = () => styleInApp(c);
+    div.appendChild(style);
+    if (sentSet().has(c.source_id)) {
+      const tick = document.createElement("span");
+      tick.className = "sent";
+      tick.textContent = "✓ sent before";
+      div.appendChild(tick);
+    }
+  }
+  return div;
+}
 
 function showResults(s) {
   const host = $("results");
   host.innerHTML = "";
-  (s.clips || []).forEach(c => {
-    const div = document.createElement("div");
-    div.className = "clip";
-    div.innerHTML =
-      `<h3>${esc(c.title)}</h3>
-       <div class="meta">${Math.round(c.duration)}s · ${c.blocks} blocks`
-      + (c.narration_blocks ? ` · ${c.narration_blocks} narrated` : "") + `</div>
-       <video src="${c.url}" controls preload="metadata"></video>
-       <div class="meta"><a href="${c.url}" download>Download</a></div>`;
-    if (c.source_id) {
-      const style = document.createElement("button");
-      style.className = "ghost";
-      style.style.marginTop = "9px";
-      style.textContent = "Style this one in the main app →";
-      style.onclick = () => styleInApp(c);
-      div.appendChild(style);
-    }
-    host.appendChild(div);
-  });
+  (s.clips || []).forEach(c => host.appendChild(clipCard(c)));
   if (s.status === "error") { say("m5", s.error || "Build failed.", "err"); return; }
   say("m5", s.message + (s.failed.length ? ` — ${s.failed.join("; ")}` : ""),
       s.failed.length ? "warn" : "ok");
@@ -484,12 +545,43 @@ function showResults(s) {
     const go = document.createElement("div");
     go.className = "clip";
     go.innerHTML = `<h3>Now style them</h3>
-      <div class="meta">Each short below has a button that opens it in the main
-      app, with the whole short already selected. There you can change the
-      framing, caption style, logo and music and see it before it renders.</div>`;
+      <div class="meta">Each short below has a button that opens it in the
+      editor, with the whole short already selected. There you can change the
+      framing, caption style, logo and music and see it before it renders.
+      They also stay listed under "Your shorts".</div>`;
     host.prepend(go);
   }
+  if (s.status === "done") loadRecent();
 }
+
+// "Your shorts": the latest batches from history, so a page reload, a server
+// restart or a trip to the editor never loses them.
+async function loadRecent() {
+  const host = $("recentList");
+  try {
+    const d = await api("/api/movie/recent?limit=5");
+    const batches = d.batches || [];
+    host.innerHTML = "";
+    if (!batches.length) {
+      say("mR", "No shorts yet. Build some above and they will be listed here.");
+      return;
+    }
+    $("mR").className = "msg";
+    batches.forEach(b => {
+      const box = document.createElement("div");
+      box.className = "batch";
+      const when = b.created ? new Date(b.created).toLocaleString() : "";
+      box.innerHTML = `<div class="meta" style="color:var(--muted);font-size:13px">
+        <b style="color:var(--text)">${esc(b.source || "Movie Shorts")}</b> · ${esc(when)}</div>`;
+      const grid = document.createElement("div");
+      grid.className = "grid";
+      b.clips.forEach(c => grid.appendChild(clipCard(c)));
+      box.appendChild(grid);
+      host.appendChild(box);
+    });
+  } catch (err) { say("mR", "Could not load your shorts: " + err.message, "warn"); }
+}
+$("recentRefresh").onclick = loadRecent;
 
 // Hand one short to the main app for styling.
 //
@@ -515,8 +607,24 @@ function styleInApp(c) {
   } catch (err) {
     return say("m5", "Could not hand it over: " + err.message, "err");
   }
+  markSent(c.source_id);
+  if (EMBEDDED) {
+    // The editor is the page around us: tell it, and it closes this panel and
+    // loads the short. This page stays alive behind it, list and all.
+    window.parent.postMessage({ type: "cf-armed" }, window.location.origin);
+    loadRecent();
+    return;
+  }
   window.location.href = "/";
 }
+
+// On load: show past shorts, and resume watching a render that was running.
+loadRecent();
+(() => {
+  let last = null;
+  try { last = localStorage.getItem(LAST_JOB_KEY); } catch (_) {}
+  if (last) { say("m5", "Checking on your last render…"); watchJob(last); }
+})();
 
 // Caption styles, filled from the backend so the list never drifts.
 (async () => {
