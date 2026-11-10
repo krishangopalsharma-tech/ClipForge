@@ -30,7 +30,7 @@ from .models import (
     LANGUAGE_NAMES,
     ClipGenerationError,
     GenerateRequest,
-    InvalidVideoURLError,
+    BadInputError,
     TranscriptionError,
 )
 from .paths import CLIPS_DIR, WORK_DIR
@@ -221,7 +221,7 @@ def _run_pipeline(job: Job) -> None:
             try:
                 source_mp4 = uploads.resolve_upload(req.download_id)
                 job.set_stage("downloading", 1.0, "Video already downloaded. Preparing...")
-            except InvalidVideoURLError:
+            except BadInputError:
                 # Prefetched file vanished — fall back to a normal download below.
                 logger.warning(
                     "[%s] prefetched file %s missing; re-downloading.",
@@ -433,7 +433,7 @@ def _run_pipeline(job: Job) -> None:
         except Exception:  # noqa: BLE001 - history is best-effort, never fail the job
             logger.warning("[%s] could not write history entry", job.id, exc_info=True)
 
-    except InvalidVideoURLError as exc:
+    except BadInputError as exc:
         logger.warning("[%s] download error: %s", job.id, exc)
         job.fail(str(exc))
     except TranscriptionError as exc:

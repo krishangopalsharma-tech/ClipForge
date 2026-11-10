@@ -648,7 +648,7 @@ def run_verification(
     fixing the file, say) does not transcribe again.
 
     Raises:
-        VerifyError / InvalidVideoURLError / TranscriptionError.
+        VerifyError / BadInputError / TranscriptionError.
     """
     from . import pretranscribe, uploads
 
@@ -708,7 +708,7 @@ def start(source_id: str, device: str = "auto", language: Optional[str] = None):
 
 
 def _run_job(job) -> None:
-    from .models import InvalidVideoURLError, TranscriptionError
+    from .models import BadInputError, TranscriptionError
 
     def on_progress(frac: float, msg: str) -> None:
         job.update(progress=min(0.99, frac), message=msg)
@@ -716,7 +716,7 @@ def _run_job(job) -> None:
     try:
         run_verification(job.source_id, job.device, job.language, progress=on_progress)
         job.update(status="done", progress=1.0, message="Verified.")
-    except (VerifyError, InvalidVideoURLError, TranscriptionError) as exc:
+    except (VerifyError, BadInputError, TranscriptionError) as exc:
         logger.warning("[%s] verification failed: %s", job.id, exc)
         job.update(status="error", error=str(exc), message="Could not verify.")
     except Exception as exc:  # noqa: BLE001 - never let the thread die silently

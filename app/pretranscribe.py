@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Callable, Dict, Optional
 
 from . import transcriber, uploads
-from .models import InvalidVideoURLError, TranscriptionError
+from .models import BadInputError, TranscriptionError
 from .paths import TRANSCRIPTS_DIR
 
 logger = logging.getLogger("ai_video_clipper.pretranscribe")
@@ -229,7 +229,7 @@ def _run(job: TranscriptJob) -> None:
         return
     try:
         path = uploads.resolve_upload(job.source_id)
-    except InvalidVideoURLError as exc:
+    except BadInputError as exc:
         job.update(status="error", error=str(exc), message="Source file not found.")
         return
 

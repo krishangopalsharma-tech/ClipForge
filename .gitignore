@@ -11,3 +11,6 @@ __pycache__/
 pip_done.txt
 install.log
 .work/
+
+# graphify knowledge graph output (rebuild with /graphify)
+graphify-out/

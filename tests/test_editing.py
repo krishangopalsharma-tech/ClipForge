@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app import clipper, history, overlays, rendering  # noqa: E402
 from app.models import (  # noqa: E402
     AspectRatio, ClipChanges, ClipGenerationError, FitMode, GenerateRequest,
-    InvalidVideoURLError,
+    BadInputError,
 )
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
@@ -53,7 +53,7 @@ class LogoLibraryTests(unittest.TestCase):
     def test_rejects_wrong_type_empty_big_and_fake_images(self):
         for name, data in (("a.gif", PNG), ("a.png", b""), ("a.png", b"not an image"),
                            ("a.png", PNG + b"\x00" * overlays.MAX_LOGO_BYTES)):
-            with self.assertRaises(InvalidVideoURLError, msg=name):
+            with self.assertRaises(BadInputError, msg=name):
                 overlays.save_logo(name, io.BytesIO(data))
 
     def test_resolve_refuses_paths_and_missing_files(self):
@@ -272,7 +272,7 @@ class ApplyChangesTests(unittest.TestCase):
         self.assertLessEqual(new["end"], 100.0)
 
     def test_unknown_music_is_a_400_and_blank_clears(self):
-        with mock.patch.object(rendering.music, "resolve_track", side_effect=InvalidVideoURLError("no")):
+        with mock.patch.object(rendering.music, "resolve_track", side_effect=BadInputError("no")):
             with self.assertRaises(rendering.RestyleError) as cm:
                 rendering.apply_changes(base_recipe(), ClipChanges(music_track="x.mp3"), transcript())
         self.assertEqual(cm.exception.status, 400)
@@ -362,7 +362,7 @@ class RestyleFlowTests(unittest.TestCase):
         with self.assertRaises(rendering.RestyleError) as cm:
             rendering.restyle_clip(self.CID, 5, ClipChanges())
         self.assertEqual(cm.exception.status, 404)
-        with mock.patch.object(rendering.uploads, "resolve_upload", side_effect=InvalidVideoURLError("gone")):
+        with mock.patch.object(rendering.uploads, "resolve_upload", side_effect=BadInputError("gone")):
             with self.assertRaises(rendering.RestyleError) as cm:
                 rendering.restyle_clip(self.CID, 0, ClipChanges())
         self.assertEqual(cm.exception.status, 409)

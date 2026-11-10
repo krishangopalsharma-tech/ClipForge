@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClipForge — Movie Shorts</title>
+<style>
+  :root{
+    --bg:#0e0f13; --panel:#171921; --panel-2:#1e212b; --line:#2a2e3c;
+    --text:#e7e9ee; --muted:#9aa1b1; --accent:#6c8cff; --accent-2:#8f7bff;
+    --ok:#3ecf8e; --warn:#ffb020; --err:#ff5f6b;
+    --radius:12px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:28px 16px 80px}
+  h1{font-size:24px;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 24px}
+  .step{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+        padding:18px;margin-bottom:16px}
+  .step.off{opacity:.45;pointer-events:none}
+  .step h2{font-size:15px;margin:0 0 12px;display:flex;align-items:center;gap:9px}
+  .n{display:grid;place-items:center;width:23px;height:23px;border-radius:50%;
+     background:var(--accent);color:#fff;font-size:12px;font-weight:700;flex:none}
+  label{display:block;font-size:13px;color:var(--muted);margin:10px 0 5px}
+  input,select,textarea,button{font:inherit;color:var(--text)}
+  input,select,textarea{width:100%;background:var(--panel-2);border:1px solid var(--line);
+       border-radius:9px;padding:9px 11px}
+  textarea{min-height:150px;resize:vertical;font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
+  button{background:var(--accent);border:0;border-radius:9px;padding:10px 16px;
+         color:#fff;font-weight:600;cursor:pointer}
+  button.ghost{background:var(--panel-2);border:1px solid var(--line);color:var(--text)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+  .row>*{flex:1;min-width:130px}
+  .row>.auto{flex:0 0 auto;min-width:0}
+  .msg{margin-top:10px;font-size:13px;padding:9px 11px;border-radius:9px;display:none}
+  .msg.show{display:block}
+  .msg.ok{background:rgba(62,207,142,.12);color:var(--ok)}
+  .msg.err{background:rgba(255,95,107,.12);color:var(--err)}
+  .msg.warn{background:rgba(255,176,32,.12);color:var(--warn)}
+  .msg.info{background:var(--panel-2);color:var(--muted)}
+  .bar{height:6px;background:var(--panel-2);border-radius:4px;overflow:hidden;margin-top:10px}
+  .bar>i{display:block;height:100%;background:var(--accent);width:0;transition:width .3s}
+  .clip{background:var(--panel-2);border:1px solid var(--line);border-radius:10px;
+        padding:12px;margin-top:10px}
+  .clip h3{margin:0 0 3px;font-size:14px}
+  .meta{color:var(--muted);font-size:12.5px}
+  .blocks{display:flex;gap:3px;margin-top:9px;height:9px}
+  .blocks i{display:block;border-radius:2px}
+  .blocks i.vo{background:var(--accent)}
+  .blocks i.dl{background:var(--ok)}
+  .warns{margin:8px 0 0;padding-left:18px;color:var(--warn);font-size:12.5px}
+  .key{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-top:8px}
+  .key span{display:flex;align-items:center;gap:5px}
+  .key i{width:9px;height:9px;border-radius:2px;display:block}
+  video{width:100%;max-width:260px;border-radius:9px;margin-top:9px;background:#000}
+  code{background:var(--panel-2);padding:1px 5px;border-radius:4px;font-size:12.5px}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Movie Shorts</h1>
+  <p class="sub">Cut a film into vertical shorts — narrated with Kokoro, or straight from the
+    original dialogue. <a href="/studio">Studio</a> · <a href="/">Dashboard</a></p>
+
+  <!-- 1 ---------------------------------------------------------------- -->
+  <div class="step" id="s1">
+    <h2><span class="n">1</span> The film</h2>
+    <label>Upload a video file (.mp4, .mkv, .mov …)</label>
+    <input type="file" id="file" accept="video/*">
+    <div class="row" style="margin-top:10px">
+      <div><label>…or paste a source id you already have</label>
+        <input id="sid" placeholder="32-character id"></div>
+      <div class="auto"><button class="ghost" id="useId">Use it</button></div>
+    </div>
+    <div class="msg" id="m1"></div>
+  </div>
+
+  <!-- 2 ---------------------------------------------------------------- -->
+  <div class="step off" id="s2">
+    <h2><span class="n">2</span> The transcript</h2>
+    <p class="meta">A subtitle file exported from Premiere is the most accurate and takes
+      no time. Whisper is there when you have no subtitles.</p>
+    <label>Upload .srt / .vtt / timestamped .txt</label>
+    <input type="file" id="srt" accept=".srt,.vtt,.txt">
+    <div class="row" style="margin-top:12px">
+      <div class="auto"><button class="ghost" id="whisper">Transcribe with Whisper</button></div>
+      <div class="auto"><button class="ghost" id="checkTr">Check transcript</button></div>
+    </div>
+    <div class="bar" id="b2" style="display:none"><i></i></div>
+    <div class="msg" id="m2"></div>
+  </div>
+
+  <!-- 3 ---------------------------------------------------------------- -->
+  <div class="step off" id="s3">
+    <h2><span class="n">3</span> The prompt</h2>
+    <div class="row">
+      <div><label>Mode</label>
+        <select id="mode">
+          <option value="voiceover_hybrid">Voiceover + real dialogue</option>
+          <option value="scene_edit">Scene edit (no narrator)</option>
+        </select></div>
+      <div><label>Shorts</label><input id="num" type="number" value="4" min="1" max="12"></div>
+      <div><label>Seconds each</label><input id="len" type="number" value="90" min="15" max="180"></div>
+      <div class="auto"><button id="getPrompt">Build prompt</button></div>
+    </div>
+    <label style="margin-top:12px">Paste this into Claude, Gemini or ChatGPT</label>
+    <textarea id="prompt" readonly placeholder="Press Build prompt"></textarea>
+    <div class="row" style="margin-top:9px">
+      <div class="auto"><button class="ghost" id="copy">Copy</button></div>
+    </div>
+    <div class="msg" id="m3"></div>
+  </div>
+
+  <!-- 4 ---------------------------------------------------------------- -->
+  <div class="step off" id="s4">
+    <h2><span class="n">4</span> The model's answer</h2>
+    <label>Paste the JSON it replied with</label>
+    <textarea id="json" placeholder='{ "mode": "...", "clips": [ ... ] }'></textarea>
+    <div class="row" style="margin-top:9px">
+      <div class="auto"><button id="check">Check it</button></div>
+    </div>
+    <div id="preview"></div>
+    <div class="msg" id="m4"></div>
+  </div>
+
+  <!-- 5 ---------------------------------------------------------------- -->
+  <div class="step off" id="s5">
+    <h2><span class="n">5</span> Render</h2>
+    <div class="row">
+      <div><label>Narrator</label><select id="voice"><option>am_michael</option></select></div>
+      <div><label>Captions</label><select id="capStyle">
+        <option value="alex_caps">Alex caps (centred)</option>
+      </select></div>
+      <div class="auto"><button id="render">Render shorts</button></div>
+    </div>
+    <div class="bar" id="b5" style="display:none"><i></i></div>
+    <div class="msg" id="m5"></div>
+    <div id="results"></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let sourceId = null, poll = null;
+
+function say(el, text, kind = "info") {
+  const box = $(el);
+  box.textContent = text;
+  box.className = "msg show " + kind;
+}
+function open(step) { $(step).classList.remove("off"); }
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  let data = {};
+  try { data = await r.json(); } catch (e) { /* non-JSON error page */ }
+  if (!r.ok) throw new Error(data.detail || `${r.status} ${r.statusText}`);
+  return data;
+}
+
+// 1 — the film -------------------------------------------------------------
+$("file").onchange = async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  say("m1", `Uploading ${f.name}…`);
+  const body = new FormData();
+  body.append("file", f);
+  try {
+    const d = await api("/api/upload", { method: "POST", body });
+    sourceId = d.upload_id;
+    $("sid").value = sourceId;
+    say("m1", `Ready. Source id ${sourceId}`, "ok");
+    open("s2");
+  } catch (err) { say("m1", err.message, "err"); }
+};
+$("useId").onclick = () => {
+  const v = $("sid").value.trim();
+  if (!v) return say("m1", "Paste an id first.", "err");
+  sourceId = v;
+  say("m1", `Using ${v}`, "ok");
+  open("s2");
+};
+
+// 2 — the transcript -------------------------------------------------------
+$("srt").onchange = async e => {
+  const f = e.target.files[0];
+  if (!f || !sourceId) return;
+  say("m2", `Reading ${f.name}…`);
+  const body = new FormData();
+  body.append("source_id", sourceId);
+  body.append("file", f);
+  try {
+    const d = await api("/api/upload-srt", { method: "POST", body });
+    say("m2", `Transcript loaded — ${d.segments ?? "?"} lines.`, "ok");
+    open("s3");
+  } catch (err) { say("m2", err.message, "err"); }
+};
+$("whisper").onclick = async () => {
+  if (!sourceId) return;
+  say("m2", "Starting Whisper…");
+  $("b2").style.display = "block";
+  try {
+    const d = await api("/api/pretranscribe", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_id: sourceId, device: "auto" }),
+    });
+    const id = d.pretranscribe_id;
+    clearInterval(poll);
+    poll = setInterval(async () => {
+      try {
+        const s = await api(`/api/pretranscribe/${id}`);
+        $("b2").firstElementChild.style.width = Math.round((s.progress || 0) * 100) + "%";
+        say("m2", s.message || "Working…");
+        if (s.status === "done") {
+          clearInterval(poll); say("m2", "Transcribed.", "ok"); open("s3");
+        } else if (s.status === "error") {
+          clearInterval(poll); say("m2", s.error || "Transcription failed.", "err");
+        }
+      } catch (err) { clearInterval(poll); say("m2", err.message, "err"); }
+    }, 1500);
+  } catch (err) { say("m2", err.message, "err"); }
+};
+$("checkTr").onclick = async () => {
+  if (!sourceId) return;
+  try {
+    const d = await api(`/api/transcript/${sourceId}`);
+    const n = (d.segments || []).length;
+    if (!n) return say("m2", "No transcript yet.", "warn");
+    say("m2", `Transcript present — ${n} lines.`, "ok");
+    open("s3");
+  } catch (err) { say("m2", "No transcript yet for this source.", "warn"); }
+};
+
+// 3 — the prompt -----------------------------------------------------------
+$("getPrompt").onclick = async () => {
+  if (!sourceId) return;
+  const q = new URLSearchParams({
+    mode: $("mode").value, num_clips: $("num").value,
+    clip_length: $("len").value, source_id: sourceId,
+  });
+  say("m3", "Building…");
+  try {
+    const d = await api(`/api/movie/prompt?${q}`);
+    $("prompt").value = d.full;
+    if (!d.segments) say("m3", "Built, but no transcript was attached — go back to step 2.", "warn");
+    else say("m3", `Built with ${d.segments} transcript lines. Copy it into your chat.`, "ok");
+    open("s4");
+  } catch (err) { say("m3", err.message, "err"); }
+};
+$("copy").onclick = async () => {
+  const text = $("prompt").value;
+  if (!text) return;
+  try { await navigator.clipboard.writeText(text); say("m3", "Copied.", "ok"); }
+  catch (e) { $("prompt").select(); say("m3", "Press Ctrl+C to copy.", "info"); }
+};
+
+// 4 — the answer -----------------------------------------------------------
+$("check").onclick = async () => {
+  if (!sourceId) return;
+  say("m4", "Checking…");
+  $("preview").innerHTML = "";
+  try {
+    const d = await api("/api/movie/plan", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_id: sourceId, raw: $("json").value }),
+    });
+    renderPreview(d);
+    const mins = (d.total_duration / 60).toFixed(1);
+    say("m4", `${d.clips.length} shorts, about ${mins} minutes in total.`
+      + (d.skipped.length ? ` ${d.skipped.length} skipped.` : ""), "ok");
+    open("s5");
+    loadVoices(d.voice);
+  } catch (err) { say("m4", err.message, "err"); }
+};
+
+function renderPreview(d) {
+  const host = $("preview");
+  host.innerHTML = "";
+  d.clips.forEach(c => {
+    const div = document.createElement("div");
+    div.className = "clip";
+    const total = c.est_duration || 1;
+    const bars = c.timeline.map(b => {
+      const pct = Math.max(1, (b.est_duration / total) * 100);
+      const cls = b.type === "voiceover" ? "vo" : "dl";
+      return `<i class="${cls}" style="flex:0 0 ${pct.toFixed(1)}%"></i>`;
+    }).join("");
+    div.innerHTML =
+      `<h3>${esc(c.title || "Untitled")}</h3>
+       <div class="meta">${Math.round(c.est_duration)}s · ${c.timeline.length} blocks · ${esc(c.grade_preset)}</div>
+       ${c.hook_banner ? `<div class="meta">Banner: ${esc(c.hook_banner)}</div>` : ""}
+       <div class="blocks">${bars}</div>
+       ${c.warnings.length ? `<ul class="warns">${c.warnings.map(w => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}`;
+    host.appendChild(div);
+  });
+  const key = document.createElement("div");
+  key.className = "key";
+  key.innerHTML = `<span><i style="background:var(--accent)"></i>narration</span>
+                   <span><i style="background:var(--ok)"></i>original dialogue</span>`;
+  host.appendChild(key);
+}
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// 5 — render ---------------------------------------------------------------
+async function loadVoices(preferred) {
+  try {
+    const d = await api("/api/movie/voices");
+    const sel = $("voice");
+    if (!d.running) { say("m5", d.error || "Kokoro is not running.", "warn"); return; }
+    sel.innerHTML = "";
+    d.voices.forEach(v => {
+      const o = document.createElement("option");
+      o.value = o.textContent = v;
+      if (v === preferred) o.selected = true;
+      sel.appendChild(o);
+    });
+  } catch (err) { say("m5", err.message, "warn"); }
+}
+
+$("render").onclick = async () => {
+  if (!sourceId) return;
+  say("m5", "Starting…");
+  $("b5").style.display = "block";
+  $("results").innerHTML = "";
+  try {
+    const d = await api("/api/movie/render", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source_id: sourceId, raw: $("json").value,
+        caption_style: $("capStyle").value,
+      }),
+    });
+    clearInterval(poll);
+    poll = setInterval(async () => {
+      try {
+        const s = await api(`/api/movie/job/${d.job_id}`);
+        $("b5").firstElementChild.style.width = Math.round((s.progress || 0) * 100) + "%";
+        say("m5", s.message || "Working…");
+        if (s.status === "done" || s.status === "error") {
+          clearInterval(poll);
+          showResults(s);
+        }
+      } catch (err) { clearInterval(poll); say("m5", err.message, "err"); }
+    }, 1500);
+  } catch (err) { say("m5", err.message, "err"); }
+};
+
+function showResults(s) {
+  const host = $("results");
+  host.innerHTML = "";
+  (s.clips || []).forEach(c => {
+    const div = document.createElement("div");
+    div.className = "clip";
+    div.innerHTML =
+      `<h3>${esc(c.title)}</h3>
+       <div class="meta">${Math.round(c.duration)}s · ${c.blocks} blocks`
+      + (c.narration_blocks ? ` · ${c.narration_blocks} narrated` : "") + `</div>
+       <video src="${c.url}" controls preload="metadata"></video>
+       <div class="meta"><a href="${c.url}" download>Download</a></div>`;
+    host.appendChild(div);
+  });
+  if (s.status === "error") say("m5", s.error || "Render failed.", "err");
+  else say("m5", s.message + (s.failed.length ? ` — ${s.failed.join("; ")}` : ""),
+           s.failed.length ? "warn" : "ok");
+}
+
+// Caption styles, filled from the backend so the list never drifts.
+(async () => {
+  try {
+    const d = await api("/api/caption-styles");
+    const list = d.styles || d.presets || [];
+    const sel = $("capStyle");
+    if (!list.length) return;
+    sel.innerHTML = "";
+    list.forEach(p => {
+      const id = p.id || p.key || p;
+      const o = document.createElement("option");
+      o.value = id;
+      o.textContent = p.label || p.name || id;
+      if (id === "alex_caps") o.selected = true;
+      sel.appendChild(o);
+    });
+  } catch (e) { /* keep the single default */ }
+})();
+</script>
+</body>
+</html>

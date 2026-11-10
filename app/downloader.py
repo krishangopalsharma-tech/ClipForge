@@ -16,7 +16,7 @@ from typing import Callable, Optional
 
 import yt_dlp
 
-from .models import InvalidVideoURLError
+from .models import BadInputError
 from .paths import DOWNLOADS_DIR
 
 logger = logging.getLogger(__name__)
@@ -123,10 +123,10 @@ def download_video(
             so callers can surface live download progress.
 
     Raises:
-        InvalidVideoURLError: on any download failure, with a readable message.
+        BadInputError: on any download failure, with a readable message.
     """
     if not url or not url.strip():
-        raise InvalidVideoURLError("No video URL was provided.")
+        raise BadInputError("No video URL was provided.")
 
     clip_uuid = uuid.uuid4().hex
     # yt-dlp fills in the real extension; we force a merge to mp4 below so the
@@ -186,7 +186,7 @@ def download_video(
                 "and try again. To pin a browser set CLIPFORGE_COOKIES_BROWSER "
                 "(chrome/edge/firefox), or point CLIPFORGE_COOKIES_FILE at a cookies.txt."
             )
-        raise InvalidVideoURLError(msg) from last_exc
+        raise BadInputError(msg) from last_exc
 
     if expected_path.exists():
         return expected_path
@@ -197,7 +197,7 @@ def download_video(
     if candidates:
         return candidates[0]
 
-    raise InvalidVideoURLError(
+    raise BadInputError(
         "The download completed but no output file was produced. The video may "
         "be unavailable or region-locked."
     )

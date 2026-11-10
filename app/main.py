@@ -31,12 +31,12 @@ from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
 from . import (
-    captions, export, fonts, history, jobs, manual, mood, music, overlays, prefetch,
-    pretranscribe, profiles, rendering, sources, speech, storage, transcriber, uploads,
-    verify,
+    captions, export, fonts, history, jobs, kokoro_tts, manual, mood, movie,
+    movie_jobs, music, overlays, prefetch, pretranscribe, profiles, rendering,
+    sources, speech, storage, transcriber, uploads, verify,
 )
 from .models import (
-    ClipChanges, Device, GenerateRequest, InvalidVideoURLError, TranscriptionError,
+    ClipChanges, Device, GenerateRequest, BadInputError, TranscriptionError,
 )
 from .paths import (
     CLIPS_DIR, DEFAULT_CLIPS_DIR, FONTS_DIR, MUSIC_DIR, STATIC_DIR, WEB_DIST_DIR,
@@ -144,7 +144,7 @@ def upload(file: UploadFile = File(...)) -> dict:
     """
     try:
         info = uploads.save_upload(file.filename, file.file)
-    except InvalidVideoURLError as exc:
+    except BadInputError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     finally:
         file.file.close()
@@ -172,11 +172,11 @@ def upload_srt(
         fps = None
         try:
             fps = uploads.probe_fps(uploads.resolve_upload(source_id))
-        except InvalidVideoURLError:
+        except BadInputError:
             pass
         content = file.file.read()
         res = uploads.save_srt_for_source(source_id, content, file.filename or "", fps)
-    except InvalidVideoURLError as exc:
+    except BadInputError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     finally:
         file.file.close()
@@ -275,7 +275,7 @@ def upload_font(file: UploadFile = File(...)) -> dict:
     """Accept a user .ttf/.otf font and register it for use in captions."""
     try:
         info = fonts.save_user_font(file.filename, file.file)
-    except InvalidVideoURLError as exc:
+    except BadInputError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     finally:
         file.file.close()
@@ -293,7 +293,7 @@ def upload_music(file: UploadFile = File(...)) -> dict:
     """Accept a user audio file and add it to the background-music library."""
     try:
         info = music.save_track(file.filename, file.file)
-    except InvalidVideoURLError as exc:
+    except BadInputError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     finally:
         file.file.close()
@@ -503,6 +503,149 @@ def manual_windows(req: ManualWindowsRequest) -> dict:
     }
 
 
+# --------------------------------------------------------------------------- #
+# Movie Shorts
+# --------------------------------------------------------------------------- #
+class MoviePlanRequest(BaseModel):
+    source_id: str
+    raw: str
+    language: Optional[str] = None
+
+
+class MovieRenderRequest(BaseModel):
+    source_id: str
+    raw: str
+    language: Optional[str] = None
+    caption_style: str = "alex_caps"
+
+
+@app.get("/api/movie/prompt")
+def movie_prompt(
+    mode: str = movie.VOICEOVER_HYBRID,
+    num_clips: int = 4,
+    clip_length: float = 90.0,
+    source_id: Optional[str] = None,
+    language: Optional[str] = None,
+) -> dict:
+    """The paste-ready instruction block, and the transcript to send with it.
+
+    Served from the backend for the same reason as ``/api/clip-prompt``: the
+    prompt and the validator that has to accept the reply live together, so
+    they cannot drift apart.
+    """
+    try:
+        prompt = movie.build_movie_prompt(mode, num_clips, clip_length)
+    except movie.MovieJsonError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    transcript_text = ""
+    segments = 0
+    if source_id:
+        transcript = pretranscribe.load(source_id, language)
+        if transcript:
+            transcript_text = manual.format_transcript_text(transcript, source_id)
+            segments = len(transcript.get("segments") or [])
+
+    return {
+        "status": "ok",
+        "mode": mode,
+        "prompt": prompt,
+        "transcript": transcript_text,
+        "segments": segments,
+        "full": prompt + transcript_text if transcript_text else prompt,
+    }
+
+
+@app.get("/api/movie/voices")
+def movie_voices() -> dict:
+    """Kokoro's voices, or why it cannot be reached."""
+    state = kokoro_tts.status()
+    return {
+        "status": "ok" if state["ok"] else "unavailable",
+        "running": state["ok"],
+        "voices": state.get("voices") or [],
+        "error": state.get("error"),
+        "url": kokoro_tts.KOKORO_URL,
+    }
+
+
+@app.post("/api/movie/plan")
+def movie_plan(req: MoviePlanRequest) -> dict:
+    """Validate pasted movie JSON and resolve it against the transcript.
+
+    Shows exactly what would be rendered — every block's real times, the
+    estimated length of each short and anything questionable about it — before
+    the GPU is committed to it.
+    """
+    transcript = pretranscribe.load(req.source_id, req.language)
+    if transcript is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No transcript for this video yet. Transcribe it first.",
+        )
+    try:
+        payload = movie.parse_movie_json(req.raw)
+        resolved = movie.resolve_payload(payload, transcript)
+    except movie.MovieJsonError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"status": "ok", **resolved}
+
+
+@app.post("/api/movie/render")
+def movie_render(req: MovieRenderRequest) -> dict:
+    """Resolve the JSON again, then render every short on a background thread."""
+    transcript = pretranscribe.load(req.source_id, req.language)
+    if transcript is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No transcript for this video yet. Transcribe it first.",
+        )
+    try:
+        payload = movie.parse_movie_json(req.raw)
+        resolved = movie.resolve_payload(payload, transcript)
+    except movie.MovieJsonError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    needs_voice = any(
+        block["type"] == "voiceover"
+        for clip in resolved["clips"] for block in clip["timeline"]
+    )
+    if needs_voice and not kokoro_tts.status()["ok"]:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "These shorts need narration, but Kokoro is not answering. "
+                + kokoro_tts.START_HINT
+            ),
+        )
+
+    try:
+        source = uploads.resolve_upload(req.source_id)
+    except BadInputError:
+        raise HTTPException(status_code=404, detail="The source video is missing.")
+
+    job = movie_jobs.start(req.source_id, resolved, source, req.caption_style)
+    return {"status": "ok", "job_id": job.id, "clips": len(resolved["clips"])}
+
+
+@app.get("/api/movie/job/{job_id}")
+def movie_job(job_id: str) -> dict:
+    """Progress for one movie render."""
+    job = movie_jobs.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="No such render.")
+    return job.snapshot()
+
+
+@app.get("/movie")
+def movie_page() -> FileResponse:
+    """The Movie Shorts page."""
+    page = STATIC_DIR / "movie.html"
+    if not page.exists():
+        raise HTTPException(status_code=404, detail="movie.html is missing.")
+    return FileResponse(str(page))
+
+
 @app.get("/clips/{clip_id}/{filename}")
 def clip_file(clip_id: str, filename: str) -> FileResponse:
     """Serve one rendered clip or its .ass subtitle file for preview/download.
@@ -670,7 +813,7 @@ def download_file(download_id: str) -> FileResponse:
     """
     try:
         path = uploads.resolve_upload(download_id)
-    except InvalidVideoURLError:
+    except BadInputError:
         raise HTTPException(status_code=404, detail="Downloaded video not found.")
     return FileResponse(str(path))
 
@@ -793,7 +936,7 @@ def upload_overlay(file: UploadFile = File(...)) -> dict:
     """Add a logo (PNG with transparency is best; JPG and WebP work too)."""
     try:
         info = overlays.save_logo(file.filename, file.file)
-    except InvalidVideoURLError as exc:
+    except BadInputError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     finally:
         file.file.close()

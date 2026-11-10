@@ -30,6 +30,17 @@ COLOR_GRADES: dict[str, str] = {
     "vintage": "curves=preset=vintage",
     "vibrant": "eq=saturation=1.35:contrast=1.08:brightness=0.01",
     "bw": "hue=s=0,eq=contrast=1.10",
+    # Movie-recap looks. Heavier than the grades above because they are meant
+    # for compressed film footage shown small on a phone, where a gentle grade
+    # reads as no grade at all.
+    "cold_gritty": (
+        "eq=contrast=1.18:brightness=-0.02:saturation=0.78:gamma=0.92,"
+        "colorbalance=rs=-0.06:gs=0.01:bs=0.08:rm=-0.04:bm=0.05"
+    ),
+    "vibrant_cinema": (
+        "eq=contrast=1.10:brightness=0.02:saturation=1.28:gamma=0.98,"
+        "colorbalance=rs=0.03:gs=0.01:bs=-0.04:rm=0.05:gm=0.02:bm=-0.04"
+    ),
 }
 
 # Strips used to fake a smooth gradient. Each is a thin, non-overlapping band
@@ -121,6 +132,21 @@ def cinematic_stages(
     grade = COLOR_GRADES.get(str(cfg.get("color_grade") or "none"))
     if grade:
         push(grade)
+
+    # 1b) Edge sharpening. Streamed film footage arrives soft from compression
+    #     and looks softer again after being scaled down; a little contrast-
+    #     adaptive sharpening puts the edges back. `cas` does the work (it
+    #     sharpens detail without ringing flat areas) and a light unsharp pass
+    #     adds the fine edge that makes it read as crisp on a phone screen.
+    #     Applied BEFORE glow and grain so neither gets sharpened into noise.
+    if _on(cfg, "sharpen"):
+        strength = _f(_num(cfg, "sharpen_strength", 55), 0.20, 0.85)
+        luma = _f(_num(cfg, "sharpen_strength", 55), 0.40, 1.20)
+        push(
+            f"cas=strength={strength:.2f},"
+            f"unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount={luma:.2f}:"
+            f"chroma_msize_x=3:chroma_msize_y=3:chroma_amount={luma * 0.25:.2f}"
+        )
 
     # 2) Glow / bloom — isolate the HIGHLIGHTS, blur those, screen-blend back, and
     #    keep the bloom COLOUR-NEUTRAL. Three things have to be true or it looks

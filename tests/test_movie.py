@@ -1,0 +1,299 @@
+"""Movie Shorts: prompt building, JSON resolution, letterbox framing, routes."""
+
+import os
+import sys
+import unittest
+from pathlib import Path
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app import movie, movie_renderer, clipper, reframe  # noqa: E402
+from app.models import FitMode  # noqa: E402
+
+
+def _transcript(count=60, step=3.0, start=0.0):
+    """A transcript with evenly spaced lines and five words in each."""
+    segments, words = [], []
+    for i in range(count):
+        s = start + i * step
+        segments.append({"id": i, "start": s, "end": s + step - 0.4,
+                         "text": f"this is line number {i}"})
+        for j, w in enumerate(["this", "is", "line", "number", str(i)]):
+            words.append({"word": w, "start": round(s + j * 0.5, 3),
+                          "end": round(s + j * 0.5 + 0.42, 3)})
+    return {"segments": segments, "words": words, "duration": count * step}
+
+
+class ParseTests(unittest.TestCase):
+    def test_reads_json_out_of_a_fenced_reply(self):
+        raw = 'Sure!\n```json\n{"mode":"scene_edit","clips":[{"timeline":[]}]}\n```'
+        self.assertEqual(movie.parse_movie_json(raw)["mode"], "scene_edit")
+
+    def test_reads_json_with_prose_around_it(self):
+        raw = 'Here you go: {"mode":"scene_edit","clips":[{"timeline":[]}]} hope that helps'
+        self.assertEqual(len(movie.parse_movie_json(raw)["clips"]), 1)
+
+    def test_rejects_empty_and_clipless_payloads(self):
+        for raw in ("", "   ", "{}", '{"clips":[]}', "not json at all"):
+            with self.assertRaises(movie.MovieJsonError, msg=raw):
+                movie.parse_movie_json(raw)
+
+    def test_rejects_an_unknown_mode(self):
+        with self.assertRaises(movie.MovieJsonError):
+            movie.parse_movie_json('{"mode":"karaoke","clips":[{"timeline":[]}]}')
+
+
+class ResolveTests(unittest.TestCase):
+    def setUp(self):
+        self.tr = _transcript()
+
+    def _clip(self, timeline):
+        return {"clip_id": 1, "title": "T", "timeline": timeline}
+
+    def test_dialogue_block_resolves_to_real_times(self):
+        out = movie.resolve_clip(
+            self._clip([{"type": "dialogue", "start_seg": 2, "end_seg": 4}]),
+            self.tr, movie.SCENE_EDIT,
+        )
+        block = out["timeline"][0]
+        # Segment 2 starts at 6.0 and segment 4 ends at 14.6, give or take the
+        # snap into the surrounding pause.
+        self.assertAlmostEqual(block["start"], 6.0, delta=0.6)
+        self.assertAlmostEqual(block["end"], 14.6, delta=0.6)
+        self.assertGreater(block["est_duration"], 0)
+
+    def test_cuts_are_snapped_onto_word_boundaries(self):
+        out = movie.resolve_clip(
+            self._clip([{"type": "dialogue", "start_seg": 5, "end_seg": 6}]),
+            self.tr, movie.SCENE_EDIT,
+        )
+        block = out["timeline"][0]
+        starts = {round(w["start"], 2) for w in self.tr["words"]}
+        # The start sits at a word's start, or just inside the pause before it.
+        self.assertTrue(
+            any(abs(block["start"] - s) <= 0.36 for s in starts),
+            f"{block['start']} is not near any word start",
+        )
+
+    def test_out_of_range_segments_are_skipped_not_fatal(self):
+        out = movie.resolve_clip(
+            self._clip([
+                {"type": "dialogue", "start_seg": 1, "end_seg": 2},
+                {"type": "dialogue", "start_seg": 9000, "end_seg": 9001},
+            ]),
+            self.tr, movie.SCENE_EDIT,
+        )
+        self.assertEqual(len(out["timeline"]), 1)
+        self.assertTrue(any("outside" in w for w in out["warnings"]))
+
+    def test_a_clip_with_nothing_usable_raises(self):
+        with self.assertRaises(movie.MovieJsonError):
+            movie.resolve_clip(
+                self._clip([{"type": "dialogue", "start_seg": 9000, "end_seg": 9001}]),
+                self.tr, movie.SCENE_EDIT,
+            )
+
+    def test_bracketed_asides_are_stripped_from_narration(self):
+        out = movie.resolve_clip(
+            self._clip([{
+                "type": "voiceover",
+                "narration_text": "He paid fifty million (about 50M) for it.",
+                "visual_segs": [1, 2],
+            }]),
+            self.tr, movie.VOICEOVER_HYBRID,
+        )
+        text = out["timeline"][0]["narration_text"]
+        self.assertNotIn("(", text)
+        self.assertNotIn("50M", text)
+        self.assertTrue(any("bracketed" in w for w in out["warnings"]))
+
+    def test_hybrid_warns_when_the_actors_are_never_heard(self):
+        out = movie.resolve_clip(
+            self._clip([{"type": "voiceover", "narration_text": "All narration here.",
+                         "visual_segs": [1]}]),
+            self.tr, movie.VOICEOVER_HYBRID,
+        )
+        self.assertTrue(any("never heard" in w for w in out["warnings"]))
+
+    def test_unknown_grade_falls_back(self):
+        clip = self._clip([{"type": "dialogue", "start_seg": 1, "end_seg": 2}])
+        clip["grade_preset"] = "disco"
+        out = movie.resolve_clip(clip, self.tr, movie.SCENE_EDIT)
+        self.assertEqual(out["grade_preset"], "teal_orange")
+
+    def test_payload_keeps_good_clips_when_one_is_bad(self):
+        payload = {"mode": "scene_edit", "clips": [
+            {"clip_id": 1, "timeline": [{"type": "dialogue", "start_seg": 1, "end_seg": 3}]},
+            {"clip_id": 2, "timeline": [{"type": "dialogue", "start_seg": 9000, "end_seg": 9001}]},
+        ]}
+        out = movie.resolve_payload(payload, self.tr)
+        self.assertEqual(len(out["clips"]), 1)
+        self.assertEqual(len(out["skipped"]), 1)
+
+    def test_speed_is_clamped(self):
+        payload = {"mode": "scene_edit", "speed": 99,
+                   "clips": [{"timeline": [{"type": "dialogue", "start_seg": 1, "end_seg": 2}]}]}
+        self.assertLessEqual(movie.resolve_payload(payload, self.tr)["speed"], 2.0)
+
+
+class PromptTests(unittest.TestCase):
+    def test_both_modes_build_and_name_their_shape(self):
+        for mode in movie.MODES:
+            text = movie.build_movie_prompt(mode)
+            self.assertIn(mode, text, mode)
+            self.assertIn("[id]", text)
+            self.assertIn("TRANSCRIPT:", text)
+
+    def test_hybrid_prompt_forbids_brackets(self):
+        text = movie.build_movie_prompt(movie.VOICEOVER_HYBRID)
+        self.assertIn("NEVER use brackets", text)
+
+    def test_unknown_mode_raises(self):
+        with self.assertRaises(movie.MovieJsonError):
+            movie.build_movie_prompt("interpretive_dance")
+
+
+class LetterboxTests(unittest.TestCase):
+    def test_fit_mode_exists(self):
+        self.assertEqual(FitMode.LETTERBOX.value, "letterbox")
+
+    def test_plan_is_returned_without_probing_or_a_model(self):
+        """Letterbox crops nothing, so it must not need ffprobe or the detector."""
+        with mock.patch.object(reframe, "probe_size",
+                               side_effect=AssertionError("must not probe")), \
+             mock.patch.object(reframe, "get_detector",
+                               side_effect=AssertionError("must not load a model")):
+            plan = reframe.plan_reframe(
+                Path("nope.mp4"), 0.0, 5.0, 1080, 1920, "letterbox", Path("."), "0",
+            )
+        self.assertEqual(plan.mode, "letterbox")
+
+    def test_filter_graph_pads_onto_black_and_crops_nothing(self):
+        plan = reframe.ReframePlan("letterbox", "chosen by you")
+        graph = clipper._reframe_stage(1080, 1920, plan, Path("."))
+        self.assertIn("force_original_aspect_ratio=decrease", graph)
+        self.assertIn("black", graph)
+        self.assertIn("[v0]", graph)
+        self.assertNotIn("boxblur", graph)
+
+    def test_output_rate_is_pinned_for_mixed_sources(self):
+        self.assertIn("-ar", clipper._ENCODE_ARGS)
+        self.assertIn("48000", clipper._ENCODE_ARGS)
+
+
+class MicroWindowTests(unittest.TestCase):
+    def setUp(self):
+        self.segments = _transcript()["segments"]
+
+    def test_windows_fill_exactly_the_narration_length(self):
+        for total in (3.0, 7.5, 12.0):
+            windows = movie_renderer._micro_windows(
+                self.segments, [4, 9, 14], total, 180.0)
+            self.assertAlmostEqual(sum(w[1] for w in windows), total, places=2,
+                                   msg=f"total={total}")
+
+    def test_each_window_is_centred_on_its_segment(self):
+        windows = movie_renderer._micro_windows(self.segments, [10], 4.0, 180.0)
+        start, length = windows[0]
+        seg = self.segments[10]
+        mid = (seg["start"] + seg["end"]) / 2
+        self.assertAlmostEqual(start + length / 2, mid, delta=0.3)
+
+    def test_no_visual_segments_yields_nothing_to_cut(self):
+        self.assertEqual(movie_renderer._micro_windows(self.segments, [], 5.0, 180.0), [])
+
+    def test_windows_stay_inside_the_source(self):
+        windows = movie_renderer._micro_windows(self.segments, [0], 6.0, 180.0)
+        self.assertGreaterEqual(windows[0][0], 0.0)
+
+
+class LookTests(unittest.TestCase):
+    def test_movie_grades_are_registered_with_the_rest(self):
+        from app.effects import COLOR_GRADES
+        for key in ("cold_gritty", "vibrant_cinema", "teal_orange"):
+            self.assertIn(key, COLOR_GRADES, key)
+            self.assertTrue(COLOR_GRADES[key])
+
+    def test_sharpening_is_opt_in(self):
+        from app.effects import cinematic_stages
+        off, _ = cinematic_stages({"color_grade": "none"}, "in", 1080, 1920)
+        on, _ = cinematic_stages({"color_grade": "none", "sharpen": True}, "in", 1080, 1920)
+        self.assertEqual("".join(off).count("cas="), 0)
+        self.assertEqual("".join(on).count("cas="), 1)
+
+    def test_look_chain_is_empty_when_nothing_is_asked_for(self):
+        self.assertEqual(movie_renderer._look_chain("none", False), "")
+
+
+class RouteTests(unittest.TestCase):
+    """The app object is built without running its lifespan, so no model loads."""
+
+    def setUp(self):
+        from fastapi.testclient import TestClient
+        from app import main
+        self.client = TestClient(main.app)
+
+    def test_prompt_endpoint_serves_both_modes(self):
+        for mode in movie.MODES:
+            res = self.client.get(f"/api/movie/prompt?mode={mode}")
+            self.assertEqual(res.status_code, 200, mode)
+            self.assertIn("TRANSCRIPT:", res.json()["prompt"])
+
+    def test_prompt_endpoint_rejects_an_unknown_mode(self):
+        self.assertEqual(self.client.get("/api/movie/prompt?mode=nope").status_code, 400)
+
+    def test_voices_endpoint_answers_even_when_kokoro_is_down(self):
+        from app import kokoro_tts
+        with mock.patch.object(kokoro_tts, "status",
+                               return_value={"ok": False, "error": "nope"}):
+            res = self.client.get("/api/movie/voices")
+        self.assertEqual(res.status_code, 200)
+        self.assertFalse(res.json()["running"])
+
+    def test_plan_without_a_transcript_is_404(self):
+        from app import pretranscribe
+        with mock.patch.object(pretranscribe, "load", return_value=None):
+            res = self.client.post("/api/movie/plan",
+                                   json={"source_id": "a" * 32, "raw": "{}"})
+        self.assertEqual(res.status_code, 404)
+
+    def test_plan_with_bad_json_is_400(self):
+        from app import pretranscribe
+        with mock.patch.object(pretranscribe, "load", return_value=_transcript()):
+            res = self.client.post("/api/movie/plan",
+                                   json={"source_id": "a" * 32, "raw": "garbage"})
+        self.assertEqual(res.status_code, 400)
+
+    def test_plan_resolves_a_good_payload(self):
+        from app import pretranscribe
+        raw = ('{"mode":"scene_edit","clips":[{"clip_id":1,"title":"T",'
+               '"timeline":[{"type":"dialogue","start_seg":2,"end_seg":5}]}]}')
+        with mock.patch.object(pretranscribe, "load", return_value=_transcript()):
+            res = self.client.post("/api/movie/plan",
+                                   json={"source_id": "a" * 32, "raw": raw})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(len(res.json()["clips"]), 1)
+
+    def test_render_refuses_narration_while_kokoro_is_down(self):
+        from app import pretranscribe, kokoro_tts
+        raw = ('{"mode":"voiceover_hybrid","clips":[{"clip_id":1,"timeline":'
+               '[{"type":"voiceover","narration_text":"Hello there.","visual_segs":[1,2]}]}]}')
+        with mock.patch.object(pretranscribe, "load", return_value=_transcript()), \
+             mock.patch.object(kokoro_tts, "status", return_value={"ok": False, "error": "down"}):
+            res = self.client.post("/api/movie/render",
+                                   json={"source_id": "a" * 32, "raw": raw})
+        self.assertEqual(res.status_code, 503)
+        self.assertIn("Kokoro", res.json()["detail"])
+
+    def test_unknown_render_job_is_404(self):
+        self.assertEqual(self.client.get("/api/movie/job/nope").status_code, 404)
+
+    def test_movie_page_is_served(self):
+        res = self.client.get("/movie")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("Movie Shorts", res.text)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=1)

@@ -60,7 +60,10 @@ class FitMode(str, Enum):
               that is already vertical is left alone.
     - track:  always follow a face (centre crop if none is found).
     - blur:   always the full picture over a blurred copy of itself.
-    The last three apply to vertical (9:16) output; see ``app.reframe``.
+    - letterbox: the full picture at full width on plain black bars — the movie
+              recap look. Nothing is cropped, so nobody can be cut out of frame
+              and no face model is needed.
+    The last four apply to vertical (9:16) output; see ``app.reframe``.
     """
 
     CROP = "crop"
@@ -68,6 +71,7 @@ class FitMode(str, Enum):
     AUTO = "auto"
     TRACK = "track"
     BLUR = "blur"
+    LETTERBOX = "letterbox"
 
 
 class Device(str, Enum):
@@ -481,10 +485,15 @@ class GenerateResponse(BaseModel):
 # --------------------------------------------------------------------------- #
 # Domain exceptions — each maps to a clean HTTP status in main.py
 # --------------------------------------------------------------------------- #
-class InvalidVideoURLError(Exception):
-    """Raised when the source video cannot be downloaded (bad/blocked URL).
+class BadInputError(Exception):
+    """Raised when something the user supplied is unusable.
 
-    Maps to HTTP 400.
+    Covers a bad or blocked video URL, an unsupported or empty upload, a
+    malformed subtitle file, a bad font, logo or music track, and an upload
+    reference that no longer resolves.
+
+    Maps to HTTP 400, except in ``main.py`` where a missing download is
+    reported as HTTP 404.
     """
 
 

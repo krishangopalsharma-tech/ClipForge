@@ -21,7 +21,7 @@ import uuid
 from typing import Dict, Optional
 
 from . import downloader
-from .models import InvalidVideoURLError
+from .models import BadInputError
 
 logger = logging.getLogger("ai_video_clipper.prefetch")
 
@@ -120,7 +120,7 @@ def _run(pf: Prefetch) -> None:
             message="Video download completed",
         )
         logger.info("[%s] prefetch done -> %s", pf.id, path.name)
-    except InvalidVideoURLError as exc:
+    except BadInputError as exc:
         logger.warning("[%s] prefetch failed: %s", pf.id, exc)
         pf.update(status="error", error=str(exc), message=str(exc))
     except Exception as exc:  # noqa: BLE001 - never let the thread die silently

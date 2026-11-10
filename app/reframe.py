@@ -431,7 +431,7 @@ def sendcmd_script(path: Sequence[Tuple[float, float]], scaled_w: int, crop_w: i
 # --------------------------------------------------------------------------- #
 @dataclass
 class ReframePlan:
-    mode: str                              # "center" | "track" | "blur"
+    mode: str                              # "center" | "track" | "blur" | "letterbox"
     reason: str
     scaled_w: int = 0                      # width after scaling to the output height (track)
     x0: int = 0                            # the crop's starting x (track)
@@ -465,9 +465,15 @@ def plan_reframe(
     """Decide how to fit ``source[start:end]`` into ``target_w x target_h``.
 
     ``requested`` is ``"auto"`` (decide from the footage), ``"track"`` (always
-    follow a face) or ``"blur"`` (always the blurred layout). Never raises.
+    follow a face), ``"blur"`` (always the blurred layout) or ``"letterbox"``
+    (full width on black). Never raises.
     """
     try:
+        # Letterbox crops nothing, so it needs no probe, no model and no
+        # sampling — and it is just as right for a source that is already
+        # vertical, where it simply adds no bars.
+        if requested == "letterbox":
+            return ReframePlan("letterbox", "chosen by you")
         if target_w >= target_h:
             return _center("output is not vertical")
         src_w, src_h = probe_size(source)
