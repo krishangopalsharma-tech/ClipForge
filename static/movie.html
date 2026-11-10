@@ -467,6 +467,14 @@ function showResults(s) {
       + (c.narration_blocks ? ` · ${c.narration_blocks} narrated` : "") + `</div>
        <video src="${c.url}" controls preload="metadata"></video>
        <div class="meta"><a href="${c.url}" download>Download</a></div>`;
+    if (c.source_id) {
+      const style = document.createElement("button");
+      style.className = "ghost";
+      style.style.marginTop = "9px";
+      style.textContent = "Style this one in the main app →";
+      style.onclick = () => styleInApp(c);
+      div.appendChild(style);
+    }
     host.appendChild(div);
   });
   if (s.status === "error") { say("m5", s.error || "Build failed.", "err"); return; }
@@ -476,11 +484,38 @@ function showResults(s) {
     const go = document.createElement("div");
     go.className = "clip";
     go.innerHTML = `<h3>Now style them</h3>
-      <div class="meta">Each short is in your clip list, where the framing,
-      caption style, logo and music can be changed and previewed.</div>
-      <div style="margin-top:9px"><a href="/" style="font-weight:600">Open the main app →</a></div>`;
+      <div class="meta">Each short below has a button that opens it in the main
+      app, with the whole short already selected. There you can change the
+      framing, caption style, logo and music and see it before it renders.</div>`;
     host.prepend(go);
   }
+}
+
+// Hand one short to the main app for styling.
+//
+// The dashboard already knows how to take a video it has on disk plus a list of
+// chosen windows — that is how Studio sends clips there. A movie short is its
+// own source video, so arming the whole of it says "render exactly this", and
+// the app's own caption, music and logo controls apply with a live preview.
+function styleInApp(c) {
+  if (!c.source_id) return say("m5", "This short has no source video to style.", "err");
+  try {
+    localStorage.setItem("cf-armed-clips", JSON.stringify({
+      source_id: c.source_id,
+      adopt: true,
+      flash_outro: false,
+      label: c.title,
+      windows: [{
+        start: 0,
+        end: Number(c.duration) || 0,
+        title: c.title,
+        reason: "A Movie Shorts short, whole.",
+      }],
+    }));
+  } catch (err) {
+    return say("m5", "Could not hand it over: " + err.message, "err");
+  }
+  window.location.href = "/";
 }
 
 // Caption styles, filled from the backend so the list never drifts.

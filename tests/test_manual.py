@@ -134,6 +134,23 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(w["title"], "T")
         self.assertIn("line 1 here", w["text"])
 
+    def test_seconds_work_without_any_segments(self):
+        """A Movie Shorts hand-off sends seconds, and a short may be all music.
+
+        Segment ids need segments to resolve against; plain seconds do not, so
+        an empty transcript is only fatal for the former.
+        """
+        empty = {"language": "en", "duration": 30.0, "words": [], "segments": []}
+        w = manual.resolve_windows(empty, [{"start": 0, "end": 25, "title": "Whole"}])[0]
+        self.assertEqual(w["start"], 0.0)
+        self.assertEqual(w["end"], 25.0)
+        self.assertEqual(w["title"], "Whole")
+
+    def test_segment_ids_without_segments_still_fail(self):
+        empty = {"language": "en", "duration": 30.0, "words": [], "segments": []}
+        with self.assertRaises(manual.ManualWindowError):
+            manual.resolve_windows(empty, [{"start_seg": 0, "end_seg": 2}])
+
     def test_copy_fields_are_cleaned(self):
         w = manual.resolve_windows(self.t, [{
             "start_seg": 0, "end_seg": 2,

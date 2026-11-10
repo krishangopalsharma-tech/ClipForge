@@ -181,7 +181,7 @@
          built. Nothing about the app's own request is changed otherwise, and
          with no armed clips this is a no-op passthrough. -->
     <div id="cf-armed">
-      <span><b id="cf-armed-n">0</b> Studio clips armed <span class="sub" id="cf-armed-src"></span></span>
+      <span><b id="cf-armed-n">0</b> clip(s) armed <span class="sub" id="cf-armed-src"></span></span>
       <button type="button" id="cf-armed-clear">Clear</button>
     </div>
     <script>
@@ -203,8 +203,8 @@
         el.style.display = "flex";
         document.getElementById("cf-armed-n").textContent = a.windows.length;
         document.getElementById("cf-armed-src").textContent =
-          "· video " + String(a.source_id || "").slice(0, 8) +
-          "… · style it, then Generate renders these";
+          "· " + (a.label || ("video " + String(a.source_id || "").slice(0, 8) + "…")) +
+          " · style it, then Generate renders these";
       }
 
       document.getElementById("cf-armed-clear").onclick = function () {
@@ -375,7 +375,9 @@
             punchline_words: w.punchline_words,
           };
         });
-        body.flash_outro = true;
+        // Studio wants the flash outro; a movie short is already finished
+        // and says so by sending flash_outro: false.
+        body.flash_outro = armed.flash_outro !== false;
         var next = Object.assign({}, init, { body: JSON.stringify(body) });
         return nativeFetch(input, next);
       };

@@ -526,13 +526,25 @@ def resolve_with_report(
             names the offending clip so the user can fix it in their chat.
     """
     segments = transcript.get("segments") or []
-    if not segments:
+    _ID_KEYS = (
+        "start_seg", "start_segment", "from_seg",
+        "end_seg", "end_segment", "to_seg",
+    )
+    wants_ids = any(
+        isinstance(e, dict) and any(e.get(k) is not None for k in _ID_KEYS)
+        for e in entries
+    )
+    if not segments and wants_ids:
         raise ManualWindowError(
             "This video has no transcript segments to resolve clip ids against."
         )
 
     n = len(segments)
-    duration = float(transcript.get("duration") or segments[-1].get("end") or 0.0)
+    duration = float(
+        transcript.get("duration")
+        or (segments[-1].get("end") if segments else 0.0)
+        or 0.0
+    )
     words = transcript.get("words") or []
     default_picker = normalise_picker(picked_by)
 
